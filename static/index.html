@@ -130,7 +130,13 @@
             </div>
           </div>
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="voice-auto-btn" type="button" onclick="toggleAutoVoice()"
+              class="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 text-xs sm:text-sm font-semibold transition flex items-center gap-1"
+              title="Automatically read Dugout Coach replies out loud">
+              <span id="voice-auto-icon">🔇</span>
+              <span id="voice-auto-label" class="hidden sm:inline">Voice Off</span>
+            </button>
             <select id="chat-session-select" onchange="loadSelectedSession()"
               class="text-xs sm:text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 max-w-[200px] truncate"
               aria-label="Past chat sessions">
@@ -173,8 +179,14 @@
           <input id="chat-input" type="text" required autocomplete="off"
             placeholder="Ask Coach about MLB players, rules, stats, or hitting tips..."
             class="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-navy focus:border-navy text-sm sm:text-base" />
+          <button id="voice-mic-btn" type="button" onclick="toggleVoiceInput()"
+            class="px-3.5 py-2.5 rounded-xl border border-slate-300 bg-slate-100 hover:bg-gold-light text-navy font-semibold text-sm sm:text-base transition shadow-sm disabled:opacity-50 shrink-0"
+            title="Speak your question to Dugout Coach"
+            aria-label="Speak your question">
+            🎙️
+          </button>
           <button id="chat-send-btn" type="submit"
-            class="px-5 py-2.5 rounded-xl bg-navy hover:bg-navy-light text-white font-semibold text-sm sm:text-base transition shadow-sm disabled:opacity-50">
+            class="px-5 py-2.5 rounded-xl bg-navy hover:bg-navy-light text-white font-semibold text-sm sm:text-base transition shadow-sm disabled:opacity-50 shrink-0">
             Send
           </button>
         </form>

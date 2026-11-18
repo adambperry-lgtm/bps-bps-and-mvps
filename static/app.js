@@ -5,6 +5,10 @@ const STATE = {
   favoritePlayerIds: new Set(),
   newsItems: [],
   newsFilter: 'all',
+  voiceAutoSpeak: localStorage.getItem('bp_voice_auto') === 'true',
+  isListening: false,
+  recognition: null,
+  activeSpeakBtn: null,
 };
 
 const WELCOME_MESSAGE =
@@ -63,6 +67,9 @@ function switchTab(tab) {
     }
   }
 
+  if (tab !== 'chat') {
+    stopSpeaking();
+  }
   if (tab === 'tracker') {
     loadFavorites();
   } else if (tab === 'news') {
@@ -115,6 +122,7 @@ async function refreshSessionDropdown() {
 }
 
 async function startNewChat(refreshDropdown = true) {
+  stopSpeaking();
   try {
     const res = await fetch('/api/chat/sessions', { method: 'POST' });
     const data = await res.json();
@@ -174,12 +182,26 @@ function appendMessageBubble(role, content, scroll = true) {
     : 'max-w-[85%] bg-white border border-slate-200 text-slate-800 rounded-2xl rounded-bl-sm px-4 py-3 text-sm sm:text-base shadow-sm';
 
   if (!isUser) {
-    bubble.innerHTML = `
-      <div class="flex items-center gap-1.5 mb-1">
-        <span class="text-xs font-extrabold uppercase tracking-wider text-ballred">Dugout Coach</span>
-      </div>
-      <div class="leading-relaxed">${formatSimpleMarkdown(content)}</div>
-    `;
+    const header = document.createElement('div');
+    header.className = 'flex items-center justify-between gap-2 mb-1';
+    header.innerHTML = `<span class="text-xs font-extrabold uppercase tracking-wider text-ballred">Dugout Coach</span>`;
+
+    if ('speechSynthesis' in window) {
+      const speakBtn = document.createElement('button');
+      speakBtn.type = 'button';
+      speakBtn.className = 'text-xs text-slate-400 hover:text-navy font-semibold px-1.5 py-0.5 rounded transition flex items-center gap-1';
+      speakBtn.title = 'Read this message out loud';
+      speakBtn.innerHTML = '<span>🔊</span><span>Listen</span>';
+      speakBtn.onclick = () => speakText(content, speakBtn);
+      header.appendChild(speakBtn);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'leading-relaxed';
+    body.innerHTML = formatSimpleMarkdown(content);
+
+    bubble.appendChild(header);
+    bubble.appendChild(body);
   } else {
     bubble.innerHTML = `<div class="leading-relaxed">${formatSimpleMarkdown(content)}</div>`;
   }
@@ -227,8 +249,13 @@ async function handleChatSubmit(event) {
 async function sendChatMessage(msg) {
   const btn = document.getElementById('chat-send-btn');
   const input = document.getElementById('chat-input');
+  const micBtn = document.getElementById('voice-mic-btn');
   btn.disabled = true;
   input.disabled = true;
+  if (micBtn) micBtn.disabled = true;
+  if (STATE.isListening && STATE.recognition) {
+    STATE.recognition.stop();
+  }
 
   appendMessageBubble('user', msg);
   showTypingIndicator();
@@ -246,7 +273,11 @@ async function sendChatMessage(msg) {
       STATE.sessionId = data.session_id;
       localStorage.setItem('bp_active_session_id', STATE.sessionId);
     }
-    appendMessageBubble('assistant', data.reply || 'Let’s talk baseball!');
+    const reply = data.reply || 'Let’s talk baseball!';
+    appendMessageBubble('assistant', reply);
+    if (STATE.voiceAutoSpeak) {
+      speakText(reply);
+    }
     await refreshSessionDropdown();
   } catch (err) {
     removeTypingIndicator();
@@ -254,8 +285,202 @@ async function sendChatMessage(msg) {
   } finally {
     btn.disabled = false;
     input.disabled = false;
+    if (micBtn && STATE.recognition) micBtn.disabled = false;
     input.focus();
   }
+}
+
+// --- Voice Chat (Web Speech API + SpeechSynthesis) ---
+
+function initVoiceControls() {
+  updateAutoVoiceButton();
+
+  const autoBtn = document.getElementById('voice-auto-btn');
+  if (autoBtn && !('speechSynthesis' in window)) {
+    autoBtn.classList.add('hidden');
+  }
+
+  const micBtn = document.getElementById('voice-mic-btn');
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    if (micBtn) {
+      micBtn.disabled = true;
+      micBtn.title = 'Voice input is supported in Chrome, Edge, or Safari';
+    }
+    return;
+  }
+
+  const recognition = new SpeechRec();
+  recognition.lang = 'en-US';
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = false;
+
+  let finalTranscript = '';
+
+  recognition.onstart = () => {
+    STATE.isListening = true;
+    finalTranscript = '';
+    stopSpeaking();
+    const input = document.getElementById('chat-input');
+    if (input) {
+      input.dataset.prevPlaceholder = input.placeholder;
+      input.placeholder = 'Listening... speak your baseball question!';
+    }
+    if (micBtn) {
+      micBtn.classList.remove('bg-slate-100', 'text-navy', 'hover:bg-gold-light');
+      micBtn.classList.add('bg-ballred', 'text-white', 'animate-pulse');
+      micBtn.title = 'Listening... click to stop';
+    }
+  };
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        finalTranscript += t;
+      } else {
+        interim += t;
+      }
+    }
+    const input = document.getElementById('chat-input');
+    if (input) {
+      input.value = (finalTranscript || interim).trim();
+    }
+  };
+
+  recognition.onerror = (event) => {
+    if (event.error !== 'no-speech' && event.error !== 'aborted') {
+      console.warn('Speech recognition error:', event.error);
+    }
+  };
+
+  recognition.onend = async () => {
+    STATE.isListening = false;
+    const input = document.getElementById('chat-input');
+    if (input && input.dataset.prevPlaceholder) {
+      input.placeholder = input.dataset.prevPlaceholder;
+    }
+    if (micBtn) {
+      micBtn.classList.add('bg-slate-100', 'text-navy', 'hover:bg-gold-light');
+      micBtn.classList.remove('bg-ballred', 'text-white', 'animate-pulse');
+      micBtn.title = 'Speak your question to Dugout Coach';
+    }
+    const spoken = finalTranscript.trim();
+    if (spoken && input && !input.disabled) {
+      input.value = '';
+      await sendChatMessage(spoken);
+    }
+  };
+
+  STATE.recognition = recognition;
+}
+
+function toggleVoiceInput() {
+  if (!STATE.recognition) return;
+  if (STATE.isListening) {
+    STATE.recognition.stop();
+  } else {
+    try {
+      STATE.recognition.start();
+    } catch (err) {
+      console.warn('Could not start speech recognition:', err);
+    }
+  }
+}
+
+function toggleAutoVoice() {
+  STATE.voiceAutoSpeak = !STATE.voiceAutoSpeak;
+  localStorage.setItem('bp_voice_auto', String(STATE.voiceAutoSpeak));
+  updateAutoVoiceButton();
+  if (!STATE.voiceAutoSpeak) {
+    stopSpeaking();
+  }
+}
+
+function updateAutoVoiceButton() {
+  const btn = document.getElementById('voice-auto-btn');
+  const icon = document.getElementById('voice-auto-icon');
+  const label = document.getElementById('voice-auto-label');
+  if (!btn || !icon || !label) return;
+
+  if (STATE.voiceAutoSpeak) {
+    btn.classList.remove('bg-white', 'text-slate-700', 'border-slate-300', 'hover:bg-slate-100');
+    btn.classList.add('bg-navy', 'text-white', 'border-navy', 'hover:bg-navy-light');
+    icon.textContent = '🔊';
+    label.textContent = 'Voice On';
+  } else {
+    btn.classList.add('bg-white', 'text-slate-700', 'border-slate-300', 'hover:bg-slate-100');
+    btn.classList.remove('bg-navy', 'text-white', 'border-navy', 'hover:bg-navy-light');
+    icon.textContent = '🔇';
+    label.textContent = 'Voice Off';
+  }
+}
+
+function cleanTextForSpeech(text) {
+  return String(text || '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stopSpeaking() {
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+  if (STATE.activeSpeakBtn) {
+    STATE.activeSpeakBtn.innerHTML = '<span>🔊</span><span>Listen</span>';
+    STATE.activeSpeakBtn.classList.remove('text-ballred');
+    STATE.activeSpeakBtn.classList.add('text-slate-400');
+    STATE.activeSpeakBtn = null;
+  }
+}
+
+function speakText(text, btnEl = null) {
+  if (!('speechSynthesis' in window)) return;
+
+  const isSameActiveBtn = btnEl && STATE.activeSpeakBtn === btnEl && window.speechSynthesis.speaking;
+  stopSpeaking();
+  if (isSameActiveBtn) return;
+
+  const cleaned = cleanTextForSpeech(text);
+  if (!cleaned) return;
+
+  const utterance = new SpeechSynthesisUtterance(cleaned);
+  utterance.lang = 'en-US';
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+
+  const voices = window.speechSynthesis.getVoices();
+  const preferred =
+    voices.find((v) => v.lang === 'en-US' && /natural|google|samantha|alex|daniel/i.test(v.name)) ||
+    voices.find((v) => v.lang.startsWith('en-US')) ||
+    voices.find((v) => v.lang.startsWith('en'));
+  if (preferred) {
+    utterance.voice = preferred;
+  }
+
+  if (btnEl) {
+    STATE.activeSpeakBtn = btnEl;
+    btnEl.innerHTML = '<span>⏹️</span><span>Stop</span>';
+    btnEl.classList.remove('text-slate-400');
+    btnEl.classList.add('text-ballred');
+    utterance.onend = () => {
+      if (STATE.activeSpeakBtn === btnEl) {
+        stopSpeaking();
+      }
+    };
+    utterance.onerror = () => {
+      if (STATE.activeSpeakBtn === btnEl) {
+        stopSpeaking();
+      }
+    };
+  }
+
+  window.speechSynthesis.speak(utterance);
 }
 
 // --- FEATURE 2: BPs & MVPs TRACKER ---
@@ -922,6 +1147,7 @@ document.addEventListener('keydown', (e) => {
 
 // --- Boot ---
 document.addEventListener('DOMContentLoaded', async () => {
+  initVoiceControls();
   await initChat();
   await loadTeamsDropdown();
   await loadFavorites();

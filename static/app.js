@@ -669,7 +669,7 @@ async function loadNewsfeed() {
   const list = document.getElementById('newsfeed-list');
   const btn = document.getElementById('refresh-news-btn');
   if (btn) btn.textContent = '⏳ Loading...';
-  list.innerHTML = '<div class="text-sm text-slate-500 py-6 text-center">Fetching kid-safe MLB news &amp; highlights...</div>';
+  list.innerHTML = '<div class="text-sm text-slate-500 py-6 text-center">Fetching MLB news &amp; highlights...</div>';
 
   try {
     const res = await fetch('/api/newsfeed');

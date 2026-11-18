@@ -4,7 +4,7 @@ const STATE = {
   autoRefreshTimer: null,
   favoritePlayerIds: new Set(),
   newsItems: [],
-  newsFilter: 'All',
+  newsFilter: 'all',
 };
 
 const WELCOME_MESSAGE =
@@ -748,30 +748,26 @@ async function loadNewsfeed() {
     const data = await res.json();
     STATE.newsItems = data.items || [];
 
-    if (!data.has_favorites) {
-      list.innerHTML = `
-        <div class="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center text-sm text-slate-600">
-          ${escapeHtml(data.message)}
-        </div>
-      `;
-      return;
+    const teamPill = document.getElementById('news-team-pill-label');
+    if (teamPill && data.team_short_name) {
+      teamPill.textContent = data.team_short_name;
     }
 
     renderNewsfeed();
   } catch (err) {
-    list.innerHTML = '<div class="text-sm text-ballred py-4 text-center">Could not load newsfeed. Please try again!</div>';
+    list.innerHTML = '<div class="text-sm text-ballred py-4 text-center">Could not load Baseball News. Please try again!</div>';
   } finally {
-    if (btn) btn.textContent = '🔄 Refresh Newsfeed';
+    if (btn) btn.textContent = '🔄 Refresh News';
   }
 }
 
-function filterNews(category) {
-  STATE.newsFilter = category;
+function filterNews(scope) {
+  STATE.newsFilter = scope;
   document.querySelectorAll('.news-filter-btn').forEach((b) => {
-    if (b.dataset.newsFilter === category) {
-      b.className = 'news-filter-btn px-3 py-1 rounded-full text-xs font-bold bg-navy text-white transition';
+    if (b.dataset.newsFilter === scope) {
+      b.className = 'news-filter-btn px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold bg-navy text-white transition';
     } else {
-      b.className = 'news-filter-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
+      b.className = 'news-filter-btn px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition';
     }
   });
   renderNewsfeed();
@@ -779,15 +775,21 @@ function filterNews(category) {
 
 function renderNewsfeed() {
   const list = document.getElementById('newsfeed-list');
-  const items =
-    STATE.newsFilter === 'All'
-      ? STATE.newsItems
-      : STATE.newsItems.filter((i) => i.category === STATE.newsFilter);
+  let items = STATE.newsItems;
+  if (STATE.newsFilter === 'team') {
+    items = STATE.newsItems.filter((i) => i.is_team);
+  } else if (STATE.newsFilter === 'mvp') {
+    items = STATE.newsItems.filter((i) => i.is_mvp);
+  }
 
   if (!items.length) {
+    const emptyMsg =
+      STATE.newsFilter === 'mvp'
+        ? 'No stories for your MVPs yet. Follow players in BPs & MVPs Tracker or switch to Phillies / All MLB!'
+        : 'No stories in this filter right now. Try selecting All MLB!';
     list.innerHTML = `
       <div class="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center text-sm text-slate-500">
-        No stories in this category right now. Try selecting "All" or follow more players!
+        ${emptyMsg}
       </div>
     `;
     return;

@@ -230,36 +230,37 @@ def fetch_reader_article(url: str) -> dict:
 def get_followed_player_newsfeed() -> dict:
     fav_players = database.get_favorite_players()
     fav_team = database.get_favorite_team()
-
-    if not fav_players and not fav_team:
-        return {
-            "has_favorites": False,
-            "items": [],
-            "message": "Follow your favorite MLB players or team in the BPs & MVPs Tracker to see their newsfeed here!",
-        }
+    fav_team_name = (fav_team or {}).get("team_name") or "Philadelphia Phillies"
+    fav_team_short = fav_team_name.split()[-1] if fav_team_name else "Phillies"
+    fav_team_slug = (fav_team or {}).get("team_slug") or "phillies"
 
     feed_items: list[dict] = []
     seen_article_ids: set[str] = set()
 
     # 1. Collect RSS feeds (MLB.com + team RSS + ESPN + MLBTR + CBS + Yahoo)
-    rss_sources: list[tuple[str, str]] = [("MLB.com", "https://www.mlb.com/feeds/news/rss.xml")]
-    team_slugs: set[str] = set()
+    rss_sources: list[tuple[str, str, bool]] = [
+        ("MLB.com", "https://www.mlb.com/feeds/news/rss.xml", False),
+        ("MLB.com", f"https://www.mlb.com/{fav_team_slug}/feeds/news/rss.xml", True),
+    ]
+    team_slugs: set[str] = {fav_team_slug}
     for p in fav_players:
-        if p.get("team_slug"):
-            team_slugs.add(p["team_slug"])
-    if fav_team and fav_team.get("team_slug"):
-        team_slugs.add(fav_team["team_slug"])
+        slug = p.get("team_slug")
+        if slug and slug not in team_slugs:
+            team_slugs.add(slug)
+            rss_sources.append(("MLB.com", f"https://www.mlb.com/{slug}/feeds/news/rss.xml", False))
 
-    for slug in sorted(team_slugs):
-        rss_sources.append(("MLB.com", f"https://www.mlb.com/{slug}/feeds/news/rss.xml"))
-
-    rss_sources.extend(EXTRA_RSS_FEEDS)
+    for source_name, url in EXTRA_RSS_FEEDS:
+        rss_sources.append((source_name, url, False))
 
     all_entries: list[dict] = []
-    for source_name, url in rss_sources:
-        all_entries.extend(_fetch_rss(url, source_name))
+    for source_name, url, is_fav_team_feed in rss_sources:
+        for e in _fetch_rss(url, source_name):
+            e["from_fav_team_feed"] = is_fav_team_feed
+            all_entries.append(e)
 
-    # Match RSS articles to favorited players or favorite team
+    general_mlb_count = 0
+    MAX_GENERAL_MLB = 20
+
     for entry in all_entries:
         aid = _article_id(entry["link"], entry["title"])
         if aid in seen_article_ids:
@@ -273,18 +274,26 @@ def get_followed_player_newsfeed() -> dict:
                 matched_player = p
                 break
 
-        team_match = False
-        if not matched_player and fav_team:
-            tname = (fav_team.get("team_name") or "").lower()
-            tshort = tname.split()[-1] if tname else ""
-            if (tname and tname in haystack) or (tshort and len(tshort) > 3 and tshort in haystack):
-                team_match = True
+        is_team = bool(entry.get("from_fav_team_feed"))
+        if not is_team and fav_team_name:
+            tname_l = fav_team_name.lower()
+            tshort_l = fav_team_short.lower()
+            if tname_l in haystack or (len(tshort_l) > 3 and tshort_l in haystack):
+                is_team = True
 
-        if not matched_player and not team_match:
-            continue
+        is_mvp = matched_player is not None
+
+        if not is_mvp and not is_team:
+            if general_mlb_count >= MAX_GENERAL_MLB:
+                continue
+            general_mlb_count += 1
 
         seen_article_ids.add(aid)
-        target_name = matched_player["full_name"] if matched_player else fav_team["team_name"]
+        target_name = (
+            matched_player["full_name"]
+            if matched_player
+            else (fav_team_name if is_team else "MLB")
+        )
 
         # Check SQLite cache for Gemini summary
         cached = database.get_cached_summary(aid)
@@ -322,14 +331,18 @@ def get_followed_player_newsfeed() -> dict:
                 "headshot_url": mlb_service.headshot_url(matched_player["player_id"]) if matched_player else None,
                 "published_at": entry["published_at"],
                 "url": entry["link"],
+                "is_team": is_team,
+                "is_mvp": is_mvp,
             }
         )
 
     # 2. Roster Transactions & Game Performance Recaps for each favorited player
+    fav_team_id = (fav_team or {}).get("team_id")
     for p in fav_players:
         pid = p["player_id"]
         pname = p["full_name"]
         p_headshot = mlb_service.headshot_url(pid)
+        p_is_team = bool(fav_team_id and p.get("team_id") == fav_team_id)
 
         txs = mlb_service.get_player_transactions(pid, limit=4)
         for tx in txs:
@@ -347,6 +360,8 @@ def get_followed_player_newsfeed() -> dict:
                     "headshot_url": p_headshot,
                     "published_at": iso_dt,
                     "url": f"https://www.mlb.com/player/{pid}",
+                    "is_team": p_is_team,
+                    "is_mvp": True,
                 }
             )
 
@@ -369,6 +384,8 @@ def get_followed_player_newsfeed() -> dict:
                         "headshot_url": p_headshot,
                         "published_at": iso_dt,
                         "url": f"https://www.mlb.com/player/{pid}",
+                        "is_team": p_is_team,
+                        "is_mvp": True,
                     }
                 )
         except Exception:
@@ -378,6 +395,7 @@ def get_followed_player_newsfeed() -> dict:
 
     return {
         "has_favorites": True,
-        "items": feed_items[:50],
-        "message": None if feed_items else "No recent articles found yet—check back soon or follow more players!",
+        "team_short_name": fav_team_short,
+        "items": feed_items[:60],
+        "message": None if feed_items else "No recent articles found yet—check back soon!",
     }

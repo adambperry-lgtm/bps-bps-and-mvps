@@ -97,7 +97,7 @@
           <button id="tab-btn-news" onclick="switchTab('news')"
             class="tab-inactive px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
             <span>📰</span>
-            <span>Player Newsfeed</span>
+            <span>Baseball News</span>
           </button>
         </nav>
         <button onclick="openSettingsModal()" aria-label="Open Settings" title="Settings"
@@ -248,26 +248,30 @@
           <div>
             <h2 class="text-xl font-extrabold text-navy flex items-center gap-2">
               <span>📰</span>
-              <span>Followed-Player Newsfeed</span>
+              <span>Baseball News</span>
             </h2>
-            <p class="text-sm text-slate-500">MLB news, roster moves, and game recaps for your MVPs &amp; team</p>
+            <p class="text-sm text-slate-500">Latest stories, roster moves, and game recaps from MLB.com, ESPN, and more</p>
           </div>
           <button onclick="loadNewsfeed()" id="refresh-news-btn"
             class="px-3.5 py-2 rounded-lg bg-navy hover:bg-navy-light text-white text-xs sm:text-sm font-semibold transition shadow-sm self-start sm:self-auto">
-            🔄 Refresh Newsfeed
+            🔄 Refresh News
           </button>
         </div>
 
-        <!-- Category Filter Pills -->
+        <!-- Scope Filter Pills -->
         <div class="flex flex-wrap items-center gap-2">
-          <button onclick="filterNews('All')" data-news-filter="All"
-            class="news-filter-btn px-3 py-1 rounded-full text-xs font-bold bg-navy text-white transition">All</button>
-          <button onclick="filterNews('Game Highlight')" data-news-filter="Game Highlight"
-            class="news-filter-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Game Highlight</button>
-          <button onclick="filterNews('Roster Move')" data-news-filter="Roster Move"
-            class="news-filter-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">Roster Move</button>
-          <button onclick="filterNews('MLB News')" data-news-filter="MLB News"
-            class="news-filter-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">MLB News</button>
+          <button onclick="filterNews('team')" data-news-filter="team"
+            class="news-filter-btn px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+            <span id="news-team-pill-label">Phillies</span>
+          </button>
+          <button onclick="filterNews('mvp')" data-news-filter="mvp"
+            class="news-filter-btn px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition">
+            My MVPs
+          </button>
+          <button onclick="filterNews('all')" data-news-filter="all"
+            class="news-filter-btn px-3.5 py-1.5 rounded-full text-xs sm:text-sm font-bold bg-navy text-white transition">
+            All MLB
+          </button>
         </div>
 
         <!-- Newsfeed Items -->

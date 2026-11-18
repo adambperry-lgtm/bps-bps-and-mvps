@@ -727,9 +727,12 @@ function renderNewsfeed() {
     'MLB News': 'bg-blue-100 text-navy',
   };
 
+  STATE.renderedNewsItems = items;
+
   list.innerHTML = items
-    .map((item) => {
+    .map((item, idx) => {
       const catClass = badgeColors[item.category] || 'bg-slate-100 text-slate-700';
+      const sourceName = item.source || 'MLB.com';
       const avatar = item.headshot_url
         ? `<img src="${escapeHtml(item.headshot_url)}" alt="${escapeHtml(item.player_name)}"
              class="w-12 h-12 rounded-full object-cover bg-slate-100 border-2 border-gold shrink-0" />`
@@ -743,15 +746,18 @@ function renderNewsfeed() {
               <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${catClass}">
                 ${escapeHtml(item.category)}
               </span>
+              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-navy">
+                ${escapeHtml(sourceName)}
+              </span>
               <span class="text-xs text-slate-400">${formatTimestamp(item.published_at)}</span>
             </div>
             <h3 class="font-bold text-navy text-base leading-snug">${escapeHtml(item.title)}</h3>
             <p class="text-sm text-slate-600 mt-1 leading-relaxed">${escapeHtml(item.summary)}</p>
-            <div class="mt-2">
-              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"
-                class="text-xs font-bold text-ballred hover:underline inline-flex items-center gap-1">
-                Read full story on MLB.com →
-              </a>
+            <div class="mt-2.5">
+              <button onclick="openArticleReader(${idx})"
+                class="text-xs sm:text-sm font-bold text-ballred hover:text-ballred-light hover:underline inline-flex items-center gap-1">
+                Read full story on ${escapeHtml(sourceName)} →
+              </button>
             </div>
           </div>
         </article>
@@ -759,6 +765,86 @@ function renderNewsfeed() {
     })
     .join('');
 }
+
+async function openArticleReader(idx) {
+  const item = (STATE.renderedNewsItems || [])[idx];
+  if (!item) return;
+
+  const modal = document.getElementById('article-reader-modal');
+  const body = document.getElementById('reader-modal-body');
+  const badge = document.getElementById('reader-source-badge');
+  const subtitle = document.getElementById('reader-header-subtitle');
+  const extLink = document.getElementById('reader-external-link');
+
+  const sourceName = item.source || 'MLB.com';
+  badge.textContent = sourceName;
+  subtitle.textContent = item.player_name ? `${item.player_name} • ${item.category}` : item.category;
+  extLink.href = item.url || '#';
+  extLink.textContent = `Open on ${sourceName} ↗`;
+
+  body.innerHTML = `
+    <h2 class="text-xl sm:text-2xl font-extrabold text-navy leading-snug">${escapeHtml(item.title)}</h2>
+    <div class="text-sm text-slate-500 py-6 text-center">Loading full story in reader mode...</div>
+  `;
+
+  modal.classList.remove('hidden');
+  document.body.classList.add('overflow-hidden');
+
+  try {
+    const res = await fetch(`/api/article?url=${encodeURIComponent(item.url)}`);
+    if (!res.ok) throw new Error('Reader unavailable');
+    const data = await res.json();
+
+    const imgHtml = data.image_url
+      ? `<img src="${escapeHtml(data.image_url)}" alt="${escapeHtml(data.title || item.title)}"
+           class="w-full max-h-64 object-cover rounded-xl border border-slate-200" />`
+      : '';
+
+    const paragraphsHtml =
+      data.reader_available && data.paragraphs?.length
+        ? data.paragraphs
+            .map((p) => `<p class="text-base sm:text-[17px] leading-relaxed text-slate-700">${escapeHtml(p)}</p>`)
+            .join('')
+        : `<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+             <p class="text-base leading-relaxed text-slate-700">${escapeHtml(item.summary)}</p>
+             <p class="text-xs text-slate-500">
+               Full text preview is limited for this story on ${escapeHtml(sourceName)}. You can still tap
+               <strong>Open on ${escapeHtml(sourceName)} ↗</strong> below if you'd like to view the original page.
+             </p>
+           </div>`;
+
+    body.innerHTML = `
+      <div class="space-y-4">
+        <div class="text-xs font-semibold text-slate-400">${formatTimestamp(item.published_at)} • ${escapeHtml(sourceName)}</div>
+        <h2 class="text-xl sm:text-2xl font-extrabold text-navy leading-snug">${escapeHtml(data.title || item.title)}</h2>
+        ${imgHtml}
+        <div class="space-y-3.5 pt-1">
+          ${paragraphsHtml}
+        </div>
+      </div>
+    `;
+  } catch {
+    body.innerHTML = `
+      <div class="space-y-4">
+        <h2 class="text-xl sm:text-2xl font-extrabold text-navy leading-snug">${escapeHtml(item.title)}</h2>
+        <p class="text-base leading-relaxed text-slate-700">${escapeHtml(item.summary)}</p>
+        <p class="text-xs text-slate-500">Could not load the full article in reader mode. Tap "Open on ${escapeHtml(sourceName)} ↗" below to view it directly.</p>
+      </div>
+    `;
+  }
+}
+
+function closeArticleReader() {
+  const modal = document.getElementById('article-reader-modal');
+  modal.classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeArticleReader();
+  }
+});
 
 // --- Boot ---
 document.addEventListener('DOMContentLoaded', async () => {

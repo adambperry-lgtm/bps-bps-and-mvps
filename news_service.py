@@ -1,11 +1,13 @@
 import hashlib
+import html
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from typing import Optional
+from urllib.parse import urlparse
 
 import feedparser
-import httpx
 
 import database
 import gemini_agent
@@ -15,10 +17,25 @@ _rss_cache = mlb_service.TTLCache()
 _rss_client = mlb_service.make_http_client()
 TTL_RSS = 900  # 15 minutes
 
+EXTRA_RSS_FEEDS = [
+    ("ESPN", "https://www.espn.com/espn/rss/mlb/news"),
+    ("MLB Trade Rumors", "https://www.mlbtraderumors.com/feed"),
+    ("CBS Sports", "https://www.cbssports.com/rss/headlines/mlb/"),
+    ("Yahoo Sports", "https://sports.yahoo.com/mlb/rss/"),
+]
+
+ALLOWED_READER_DOMAINS = (
+    "mlb.com",
+    "espn.com",
+    "mlbtraderumors.com",
+    "cbssports.com",
+    "sports.yahoo.com",
+)
+
 
 def _strip_html(raw: str) -> str:
     text = re.sub(r"<[^>]+>", " ", raw or "")
-    return re.sub(r"\s+", " ", text).strip()
+    return html.unescape(re.sub(r"\s+", " ", text)).strip()
 
 
 def _parse_rss_date(entry: dict) -> str:
@@ -35,7 +52,7 @@ def _parse_rss_date(entry: dict) -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _fetch_rss(url: str) -> list[dict]:
+def _fetch_rss(url: str, source_name: str) -> list[dict]:
     cached = _rss_cache.get(f"rss:{url}")
     if cached is not None:
         return cached
@@ -47,6 +64,7 @@ def _fetch_rss(url: str) -> list[dict]:
         for e in parsed.entries[:40]:
             entries.append(
                 {
+                    "source": source_name,
                     "title": _strip_html(e.get("title", "")),
                     "summary": _strip_html(e.get("summary", "") or e.get("description", "")),
                     "link": e.get("link", "https://www.mlb.com/news"),
@@ -64,6 +82,151 @@ def _article_id(url: str, title: str) -> str:
     return hashlib.sha256(raw).hexdigest()[:24]
 
 
+def _source_from_url(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if "espn.com" in host:
+        return "ESPN"
+    if "mlbtraderumors.com" in host:
+        return "MLB Trade Rumors"
+    if "cbssports.com" in host:
+        return "CBS Sports"
+    if "yahoo.com" in host:
+        return "Yahoo Sports"
+    return "MLB.com"
+
+
+class _ArticleHTMLParser(HTMLParser):
+    """Lightweight HTML parser to extract clean article paragraphs, title, and og:image."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.title: str = ""
+        self.image_url: Optional[str] = None
+        self.paragraphs: list[str] = []
+        self._skip_depth: int = 0
+        self._in_p: bool = False
+        self._in_title: bool = False
+        self._current_p: list[str] = []
+        self._current_title: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        tag = tag.lower()
+        attr_map = {k.lower(): (v or "") for k, v in attrs}
+
+        if tag == "meta":
+            prop = (attr_map.get("property") or attr_map.get("name") or "").lower()
+            content = attr_map.get("content", "").strip()
+            if prop == "og:image" and content and not self.image_url:
+                self.image_url = content
+            elif prop == "og:title" and content and not self.title:
+                self.title = html.unescape(content)
+            return
+
+        if tag in ("script", "style", "noscript", "nav", "header", "footer", "aside", "form", "svg"):
+            self._skip_depth += 1
+            return
+
+        if self._skip_depth > 0:
+            return
+
+        if tag == "title" and not self.title:
+            self._in_title = True
+            self._current_title = []
+        elif tag == "p":
+            self._in_p = True
+            self._current_p = []
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in ("script", "style", "noscript", "nav", "header", "footer", "aside", "form", "svg"):
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+            return
+
+        if tag == "title" and self._in_title:
+            self._in_title = False
+            if not self.title:
+                self.title = html.unescape("".join(self._current_title)).strip()
+        elif tag == "p" and self._in_p:
+            self._in_p = False
+            text = html.unescape(re.sub(r"\s+", " ", "".join(self._current_p))).strip()
+            # Filter out very short boilerplate snippets & promo lines
+            lower = text.lower()
+            if len(text) >= 45 and not any(
+                skip in lower
+                for skip in (
+                    "copyright ©",
+                    "all rights reserved",
+                    "privacy policy",
+                    "terms of use",
+                    "sign up for",
+                    "subscribe to",
+                    "betting",
+                    "sportsbook",
+                    "draftkings",
+                    "fanduel",
+                )
+            ):
+                self.paragraphs.append(text)
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth > 0:
+            return
+        if self._in_title:
+            self._current_title.append(data)
+        elif self._in_p:
+            self._current_p.append(data)
+
+
+def fetch_reader_article(url: str) -> dict:
+    """Fetch and clean an article from an allowlisted baseball news domain for the in-app reader pane."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not any(
+        host == d or host.endswith(f".{d}") for d in ALLOWED_READER_DOMAINS
+    ):
+        raise ValueError("Article domain is not in the allowlisted baseball sources.")
+
+    cache_key = f"reader:{url}"
+    cached = _rss_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    source = _source_from_url(url)
+    try:
+        resp = _rss_client.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+            },
+        )
+        resp.raise_for_status()
+        parser = _ArticleHTMLParser()
+        parser.feed(resp.text)
+
+        paragraphs = parser.paragraphs[:25]
+        result = {
+            "url": url,
+            "source": source,
+            "title": parser.title or f"{source} Baseball Story",
+            "image_url": parser.image_url,
+            "paragraphs": paragraphs,
+            "reader_available": len(paragraphs) > 0,
+        }
+    except Exception:
+        result = {
+            "url": url,
+            "source": source,
+            "title": f"{source} Baseball Story",
+            "image_url": None,
+            "paragraphs": [],
+            "reader_available": False,
+        }
+
+    _rss_cache.set(cache_key, result, TTL_RSS)
+    return result
+
+
 def get_followed_player_newsfeed() -> dict:
     fav_players = database.get_favorite_players()
     fav_team = database.get_favorite_team()
@@ -72,14 +235,14 @@ def get_followed_player_newsfeed() -> dict:
         return {
             "has_favorites": False,
             "items": [],
-            "message": "Follow your favorite MLB players or team in the BPs & MVPs Tracker to see their kid-safe newsfeed here!",
+            "message": "Follow your favorite MLB players or team in the BPs & MVPs Tracker to see their newsfeed here!",
         }
 
     feed_items: list[dict] = []
     seen_article_ids: set[str] = set()
 
-    # 1. Collect RSS feeds (main MLB + unique team slugs for followed players & team)
-    rss_urls = ["https://www.mlb.com/feeds/news/rss.xml"]
+    # 1. Collect RSS feeds (MLB.com + team RSS + ESPN + MLBTR + CBS + Yahoo)
+    rss_sources: list[tuple[str, str]] = [("MLB.com", "https://www.mlb.com/feeds/news/rss.xml")]
     team_slugs: set[str] = set()
     for p in fav_players:
         if p.get("team_slug"):
@@ -88,11 +251,13 @@ def get_followed_player_newsfeed() -> dict:
         team_slugs.add(fav_team["team_slug"])
 
     for slug in sorted(team_slugs):
-        rss_urls.append(f"https://www.mlb.com/{slug}/feeds/news/rss.xml")
+        rss_sources.append(("MLB.com", f"https://www.mlb.com/{slug}/feeds/news/rss.xml"))
+
+    rss_sources.extend(EXTRA_RSS_FEEDS)
 
     all_entries: list[dict] = []
-    for url in rss_urls:
-        all_entries.extend(_fetch_rss(url))
+    for source_name, url in rss_sources:
+        all_entries.extend(_fetch_rss(url, source_name))
 
     # Match RSS articles to favorited players or favorite team
     for entry in all_entries:
@@ -149,6 +314,7 @@ def get_followed_player_newsfeed() -> dict:
             {
                 "id": aid,
                 "category": "MLB News",
+                "source": entry.get("source", "MLB.com"),
                 "title": entry["title"],
                 "summary": kid_summary or entry["summary"],
                 "player_id": matched_player["player_id"] if matched_player else None,
@@ -165,7 +331,6 @@ def get_followed_player_newsfeed() -> dict:
         pname = p["full_name"]
         p_headshot = mlb_service.headshot_url(pid)
 
-        # Official Roster Moves
         txs = mlb_service.get_player_transactions(pid, limit=4)
         for tx in txs:
             tx_date = tx.get("date") or datetime.now(timezone.utc).date().isoformat()
@@ -174,6 +339,7 @@ def get_followed_player_newsfeed() -> dict:
                 {
                     "id": f"tx-{pid}-{tx.get('id')}",
                     "category": "Roster Move",
+                    "source": "MLB.com",
                     "title": f"{pname}: {tx.get('type_desc', 'Roster Move')}",
                     "summary": tx.get("description") or f"Official MLB roster update for {pname}.",
                     "player_id": pid,
@@ -184,7 +350,6 @@ def get_followed_player_newsfeed() -> dict:
                 }
             )
 
-        # Recent Game Performance Recap from last game
         try:
             details = mlb_service.get_player_details(pid)
             logs = details.get("last_5_games") or []
@@ -196,6 +361,7 @@ def get_followed_player_newsfeed() -> dict:
                     {
                         "id": f"game-{pid}-{g_date}",
                         "category": "Game Highlight",
+                        "source": "MLB.com",
                         "title": f"{pname} {last_g.get('matchup', '')} ({g_date})",
                         "summary": f"In {pname}'s most recent game {last_g.get('matchup', '')}, they posted: {last_g.get('summary', 'Great effort on the field!')}.",
                         "player_id": pid,
@@ -208,11 +374,10 @@ def get_followed_player_newsfeed() -> dict:
         except Exception:
             pass
 
-    # Sort chronologically (newest first)
     feed_items.sort(key=lambda x: x.get("published_at", ""), reverse=True)
 
     return {
         "has_favorites": True,
-        "items": feed_items[:40],
+        "items": feed_items[:50],
         "message": None if feed_items else "No recent articles found yet—check back soon or follow more players!",
     }

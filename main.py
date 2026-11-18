@@ -213,3 +213,12 @@ def delete_favorite_team():
 @app.get("/api/newsfeed")
 def get_newsfeed():
     return news_service.get_followed_player_newsfeed()
+
+
+@app.get("/api/article")
+def get_reader_article(url: str = Query(..., min_length=10)):
+    try:
+        return news_service.fetch_reader_article(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+

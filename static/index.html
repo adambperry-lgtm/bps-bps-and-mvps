@@ -300,6 +300,43 @@
     BP’s BPs and MVPs • Official data from MLB Stats API &amp; MLB.com RSS
   </footer>
 
+  <!-- Pop-Up Article Reader Modal (iPad-friendly) -->
+  <div id="article-reader-modal" onclick="if (event.target === this) closeArticleReader()"
+    class="hidden fixed inset-0 z-50 bg-navy-dark/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-white w-full max-w-3xl max-h-[88vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+      <!-- Modal Header -->
+      <div class="bg-navy text-white px-5 py-3.5 flex items-center justify-between gap-3 border-b-2 border-ballred shrink-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <span id="reader-source-badge" class="text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-gold text-navy shrink-0">
+            MLB.com
+          </span>
+          <span class="text-xs text-slate-300 truncate" id="reader-header-subtitle">Article Reader</span>
+        </div>
+        <button onclick="closeArticleReader()" aria-label="Close reader"
+          class="px-3 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-sm font-bold transition shrink-0">
+          ✕ Close
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div id="reader-modal-body" class="flex-1 overflow-y-auto p-5 sm:p-7 space-y-4 text-slate-800">
+        <!-- Populated by app.js -->
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="bg-slate-50 border-t border-slate-200 px-5 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <a id="reader-external-link" href="#" target="_blank" rel="noopener noreferrer"
+          class="text-xs font-semibold text-slate-500 hover:text-ballred hover:underline">
+          Open original page ↗
+        </a>
+        <button onclick="closeArticleReader()"
+          class="px-4 py-1.5 rounded-lg bg-navy hover:bg-navy-light text-white text-sm font-semibold transition">
+          Back to Newsfeed
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

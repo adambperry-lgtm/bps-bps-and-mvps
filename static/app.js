@@ -4,7 +4,7 @@ const STATE = {
   autoRefreshTimer: null,
   favoritePlayerIds: new Set(),
   newsItems: [],
-  newsFilter: 'all',
+  newsFilter: 'mlb',
   voiceAutoSpeak: localStorage.getItem('bp_voice_auto') === 'true',
   isListening: false,
   recognition: null,
@@ -1432,16 +1432,18 @@ function renderNewsfeed() {
   const list = document.getElementById('newsfeed-list');
   let items = STATE.newsItems;
   if (STATE.newsFilter === 'team') {
-    items = STATE.newsItems.filter((i) => i.is_team);
+    items = STATE.newsItems.filter((i) => i.is_team && i.category === 'MLB News');
   } else if (STATE.newsFilter === 'mvp') {
     items = STATE.newsItems.filter((i) => i.is_mvp);
+  } else {
+    items = STATE.newsItems.filter((i) => i.category === 'MLB News');
   }
 
   if (!items.length) {
     const emptyMsg =
       STATE.newsFilter === 'mvp'
-        ? 'No stories for your MVPs yet. Follow players in BPs & MVPs Tracker or switch to Phillies / All MLB!'
-        : 'No stories in this filter right now. Try selecting All MLB!';
+        ? 'No stories for your MVPs yet. Follow players in BPs & MVPs Tracker or switch to Phillies / MLB News!'
+        : 'No stories from today in this filter right now. Try selecting MLB News!';
     list.innerHTML = `
       <div class="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-6 text-center text-sm text-slate-500">
         ${emptyMsg}

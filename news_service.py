@@ -1,6 +1,7 @@
 import hashlib
 import html
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -10,12 +11,40 @@ from urllib.parse import urlparse
 import feedparser
 
 import database
-import gemini_agent
 import mlb_service
 
 _rss_cache = mlb_service.TTLCache()
 _rss_client = mlb_service.make_http_client()
 TTL_RSS = 900  # 15 minutes
+
+_UNSAFE_NEWS_KEYWORDS = (
+    "gambling",
+    "sportsbook",
+    "betting odds",
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "caesars sportsbook",
+    "parlay",
+    "domestic violence",
+    "sexual assault",
+    "arrested for",
+    "dui",
+    "drug suspension",
+)
+
+
+def _is_safe_news_text(title: str, summary: str) -> bool:
+    combined = f"{title} {summary}".lower()
+    return not any(kw in combined for kw in _UNSAFE_NEWS_KEYWORDS)
+
+
+def _clean_news_summary(raw: str, max_len: int = 240) -> str:
+    text = re.sub(r"\s+", " ", raw or "").strip()
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len].rsplit(" ", 1)[0].rstrip(".,;:")
+    return f"{cut}..."
 
 EXTRA_RSS_FEEDS = [
     ("ESPN", "https://www.espn.com/espn/rss/mlb/news"),
@@ -230,14 +259,22 @@ def fetch_reader_article(url: str) -> dict:
 def get_followed_player_newsfeed() -> dict:
     fav_players = database.get_favorite_players()
     fav_team = database.get_favorite_team()
+    fav_team_id = (fav_team or {}).get("team_id") or 143
     fav_team_name = (fav_team or {}).get("team_name") or "Philadelphia Phillies"
     fav_team_short = fav_team_name.split()[-1] if fav_team_name else "Phillies"
     fav_team_slug = (fav_team or {}).get("team_slug") or "phillies"
 
+    today_str = datetime.now(timezone.utc).date().isoformat()
+    player_ids_key = ",".join(str(p["player_id"]) for p in sorted(fav_players, key=lambda x: x["player_id"]))
+    feed_cache_key = f"newsfeed:{today_str}:{fav_team_id}:{player_ids_key}"
+    cached_feed = _rss_cache.get(feed_cache_key)
+    if cached_feed is not None:
+        return cached_feed
+
     feed_items: list[dict] = []
     seen_article_ids: set[str] = set()
 
-    # 1. Collect RSS feeds (MLB.com + team RSS + ESPN + MLBTR + CBS + Yahoo)
+    # 1. Collect RSS feeds in parallel (MLB.com + team RSS + ESPN + MLBTR + CBS + Yahoo)
     rss_sources: list[tuple[str, str, bool]] = [
         ("MLB.com", "https://www.mlb.com/feeds/news/rss.xml", False),
         ("MLB.com", f"https://www.mlb.com/{fav_team_slug}/feeds/news/rss.xml", True),
@@ -252,11 +289,22 @@ def get_followed_player_newsfeed() -> dict:
     for source_name, url in EXTRA_RSS_FEEDS:
         rss_sources.append((source_name, url, False))
 
+    def _load_source(src: tuple[str, str, bool]) -> list[dict]:
+        source_name, url, is_fav_team_feed = src
+        items = _fetch_rss(url, source_name)
+        out = []
+        for e in items:
+            if e.get("published_at", "")[:10] != today_str:
+                continue
+            item = dict(e)
+            item["from_fav_team_feed"] = is_fav_team_feed
+            out.append(item)
+        return out
+
     all_entries: list[dict] = []
-    for source_name, url, is_fav_team_feed in rss_sources:
-        for e in _fetch_rss(url, source_name):
-            e["from_fav_team_feed"] = is_fav_team_feed
-            all_entries.append(e)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for batch in pool.map(_load_source, rss_sources):
+            all_entries.extend(batch)
 
     general_mlb_count = 0
     MAX_GENERAL_MLB = 20
@@ -264,6 +312,9 @@ def get_followed_player_newsfeed() -> dict:
     for entry in all_entries:
         aid = _article_id(entry["link"], entry["title"])
         if aid in seen_article_ids:
+            continue
+
+        if not _is_safe_news_text(entry["title"], entry["summary"]):
             continue
 
         haystack = f"{entry['title']} {entry['summary']}".lower()
@@ -295,37 +346,13 @@ def get_followed_player_newsfeed() -> dict:
             else (fav_team_name if is_team else "MLB")
         )
 
-        # Check SQLite cache for Gemini summary
-        cached = database.get_cached_summary(aid)
-        if cached is not None:
-            if not cached["is_safe"]:
-                continue
-            kid_summary = cached["summary"]
-        else:
-            res = gemini_agent.summarize_news_for_kids(
-                title=entry["title"],
-                raw_summary=entry["summary"],
-                player_name=target_name,
-            )
-            database.save_cached_summary(
-                article_id=aid,
-                url=entry["link"],
-                title=entry["title"],
-                summary=res["summary"],
-                is_safe=res["is_safe"],
-                category="MLB News",
-            )
-            if not res["is_safe"]:
-                continue
-            kid_summary = res["summary"]
-
         feed_items.append(
             {
                 "id": aid,
                 "category": "MLB News",
                 "source": entry.get("source", "MLB.com"),
                 "title": entry["title"],
-                "summary": kid_summary or entry["summary"],
+                "summary": _clean_news_summary(entry["summary"]) or entry["title"],
                 "player_id": matched_player["player_id"] if matched_player else None,
                 "player_name": target_name,
                 "headshot_url": mlb_service.headshot_url(matched_player["player_id"]) if matched_player else None,
@@ -393,9 +420,11 @@ def get_followed_player_newsfeed() -> dict:
 
     feed_items.sort(key=lambda x: x.get("published_at", ""), reverse=True)
 
-    return {
+    result = {
         "has_favorites": True,
         "team_short_name": fav_team_short,
         "items": feed_items[:60],
-        "message": None if feed_items else "No recent articles found yet—check back soon!",
+        "message": None if feed_items else "No articles found for today yet—check back soon!",
     }
+    _rss_cache.set(feed_cache_key, result, 300)
+    return result

@@ -219,15 +219,20 @@ def _extract_hitting_stats(splits: list[dict]) -> Optional[dict]:
     return {
         "season": chosen.get("season", ""),
         "games": stat.get("gamesPlayed", 0),
+        "at_bats": stat.get("atBats", 0),
+        "runs": stat.get("runs", 0),
+        "hits": stat.get("hits", 0),
+        "doubles": stat.get("doubles", 0),
+        "triples": stat.get("triples", 0),
+        "hr": stat.get("homeRuns", 0),
+        "rbi": stat.get("rbi", 0),
+        "sb": stat.get("stolenBases", 0),
+        "walks": stat.get("baseOnBalls", 0),
+        "strikeouts": stat.get("strikeOuts", 0),
         "avg": stat.get("avg", ".000"),
         "obp": stat.get("obp", ".000"),
         "slg": stat.get("slg", ".000"),
         "ops": stat.get("ops", ".000"),
-        "hr": stat.get("homeRuns", 0),
-        "rbi": stat.get("rbi", 0),
-        "sb": stat.get("stolenBases", 0),
-        "hits": stat.get("hits", 0),
-        "runs": stat.get("runs", 0),
     }
 
 
@@ -245,9 +250,13 @@ def _extract_pitching_stats(splits: list[dict]) -> Optional[dict]:
     return {
         "season": chosen.get("season", ""),
         "games": stat.get("gamesPlayed", 0),
+        "games_started": stat.get("gamesStarted", 0),
         "era": stat.get("era", "0.00"),
         "whip": stat.get("whip", "0.00"),
         "strikeouts": stat.get("strikeOuts", 0),
+        "walks": stat.get("baseOnBalls", 0),
+        "hits": stat.get("hits", 0),
+        "earned_runs": stat.get("earnedRuns", 0),
         "innings_pitched": stat.get("inningsPitched", "0.0"),
         "wins": wins,
         "losses": losses,
@@ -365,25 +374,32 @@ def get_player_details(player_id: int) -> dict:
         except Exception:
             continue
 
-    # Historical fallback: career stats if no recent season stats found
+    # Always fetch career stats for active and historical players
+    career_hitting_stats = None
+    career_pitching_stats = None
+    try:
+        c_data = _get_json(
+            f"/people/{player_id}/stats",
+            params={"stats": "career", "group": "hitting,pitching"},
+        )
+        for block in c_data.get("stats", []):
+            group = (block.get("group") or {}).get("displayName", "")
+            splits = block.get("splits", [])
+            if group == "hitting" and splits:
+                career_hitting_stats = _extract_hitting_stats(splits)
+                career_hitting_stats["season"] = "Career"
+            elif group == "pitching" and splits:
+                career_pitching_stats = _extract_pitching_stats(splits)
+                career_pitching_stats["season"] = "Career"
+    except Exception:
+        pass
+
+    # Historical fallback: if no recent season stats found, mirror career stats into primary fields
     if not hitting_stats and not pitching_stats:
-        try:
-            c_data = _get_json(
-                f"/people/{player_id}/stats",
-                params={"stats": "career", "group": "hitting,pitching"},
-            )
-            for block in c_data.get("stats", []):
-                group = (block.get("group") or {}).get("displayName", "")
-                splits = block.get("splits", [])
-                if group == "hitting" and splits:
-                    hitting_stats = _extract_hitting_stats(splits)
-                    hitting_stats["season"] = "Career"
-                elif group == "pitching" and splits:
-                    pitching_stats = _extract_pitching_stats(splits)
-                    pitching_stats["season"] = "Career"
+        hitting_stats = career_hitting_stats
+        pitching_stats = career_pitching_stats
+        if hitting_stats or pitching_stats:
             season_used = "Career"
-        except Exception:
-            pass
 
     result = {
         "player_id": player_id,
@@ -397,12 +413,18 @@ def get_player_details(player_id: int) -> dict:
         "bats": (p.get("batSide") or {}).get("code", "—"),
         "throws": (p.get("pitchHand") or {}).get("code", "—"),
         "age": p.get("currentAge"),
+        "height": p.get("height", ""),
+        "weight": p.get("weight", ""),
+        "birth_date": p.get("birthDate", ""),
+        "mlb_debut_date": p.get("mlbDebutDate", ""),
         "jersey_number": p.get("primaryNumber"),
         "active": bool(p.get("active", False)),
         "is_pitcher": is_pitcher,
         "season_used": season_used,
         "hitting_stats": hitting_stats,
         "pitching_stats": pitching_stats,
+        "career_hitting_stats": career_hitting_stats,
+        "career_pitching_stats": career_pitching_stats,
         "last_5_games": last_5_games,
     }
     _cache.set(cache_key, result, TTL_STATS)

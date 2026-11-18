@@ -803,22 +803,66 @@ function renderFavoritePlayersGrid(players) {
   grid.innerHTML = players
     .map((p) => {
       const h = p.hitting_stats;
+      const ch = p.career_hitting_stats;
       const pit = p.pitching_stats;
-      let statSummary = '<span class="text-xs text-slate-400">Stats unavailable</span>';
-      if (p.is_pitcher && pit) {
+      const cpit = p.career_pitching_stats;
+      const isSeasonDistinct = p.season_used && p.season_used !== 'Career';
+
+      let statSummary = '<div class="text-xs text-slate-400 mt-2">Stats unavailable</div>';
+      if (p.is_pitcher && (pit || cpit)) {
+        const sRow = isSeasonDistinct && pit ? pit : null;
+        const cRow = cpit || pit;
         statSummary = `
-          <div class="grid grid-cols-3 gap-1 text-center bg-slate-50 rounded-lg p-2 mt-2 text-xs">
-            <div><div class="text-slate-400">ERA</div><div class="font-bold text-navy">${escapeHtml(pit.era)}</div></div>
-            <div><div class="text-slate-400">W-L</div><div class="font-bold text-navy">${escapeHtml(pit.w_l)}</div></div>
-            <div><div class="text-slate-400">K</div><div class="font-bold text-navy">${pit.strikeouts}</div></div>
+          <div class="mt-2.5 rounded-lg overflow-hidden border border-navy/25 bg-[#fdf8ec] text-[11px] font-mono tabular-nums">
+            <div class="grid grid-cols-5 bg-navy text-gold font-sans font-bold uppercase tracking-wider px-2 py-1 text-[10px]">
+              <div>YR</div><div class="text-right">W-L</div><div class="text-right">ERA</div><div class="text-right">WHIP</div><div class="text-right">K</div>
+            </div>
+            ${sRow ? `
+              <div class="grid grid-cols-5 px-2 py-1 text-slate-800 border-b border-amber-200/80">
+                <div class="font-bold text-navy">${escapeHtml(sRow.season || p.season_used)}</div>
+                <div class="text-right">${escapeHtml(sRow.w_l)}</div>
+                <div class="text-right">${escapeHtml(sRow.era)}</div>
+                <div class="text-right">${escapeHtml(sRow.whip)}</div>
+                <div class="text-right">${sRow.strikeouts}</div>
+              </div>
+            ` : ''}
+            ${cRow ? `
+              <div class="grid grid-cols-5 px-2 py-1 bg-[#efe4c8] text-navy font-bold">
+                <div>CAR</div>
+                <div class="text-right">${escapeHtml(cRow.w_l)}</div>
+                <div class="text-right">${escapeHtml(cRow.era)}</div>
+                <div class="text-right">${escapeHtml(cRow.whip)}</div>
+                <div class="text-right">${cRow.strikeouts}</div>
+              </div>
+            ` : ''}
           </div>
         `;
-      } else if (h) {
+      } else if (h || ch) {
+        const sRow = isSeasonDistinct && h ? h : null;
+        const cRow = ch || h;
         statSummary = `
-          <div class="grid grid-cols-3 gap-1 text-center bg-slate-50 rounded-lg p-2 mt-2 text-xs">
-            <div><div class="text-slate-400">AVG</div><div class="font-bold text-navy">${escapeHtml(h.avg)}</div></div>
-            <div><div class="text-slate-400">HR</div><div class="font-bold text-navy">${h.hr}</div></div>
-            <div><div class="text-slate-400">RBI</div><div class="font-bold text-navy">${h.rbi}</div></div>
+          <div class="mt-2.5 rounded-lg overflow-hidden border border-navy/25 bg-[#fdf8ec] text-[11px] font-mono tabular-nums">
+            <div class="grid grid-cols-5 bg-navy text-gold font-sans font-bold uppercase tracking-wider px-2 py-1 text-[10px]">
+              <div>YR</div><div class="text-right">AVG</div><div class="text-right">HR</div><div class="text-right">RBI</div><div class="text-right">OPS</div>
+            </div>
+            ${sRow ? `
+              <div class="grid grid-cols-5 px-2 py-1 text-slate-800 border-b border-amber-200/80">
+                <div class="font-bold text-navy">${escapeHtml(sRow.season || p.season_used)}</div>
+                <div class="text-right">${escapeHtml(sRow.avg)}</div>
+                <div class="text-right">${sRow.hr}</div>
+                <div class="text-right">${sRow.rbi}</div>
+                <div class="text-right">${escapeHtml(sRow.ops)}</div>
+              </div>
+            ` : ''}
+            ${cRow ? `
+              <div class="grid grid-cols-5 px-2 py-1 bg-[#efe4c8] text-navy font-bold">
+                <div>CAR</div>
+                <div class="text-right">${escapeHtml(cRow.avg)}</div>
+                <div class="text-right">${cRow.hr}</div>
+                <div class="text-right">${cRow.rbi}</div>
+                <div class="text-right">${escapeHtml(cRow.ops)}</div>
+              </div>
+            ` : ''}
           </div>
         `;
       }
@@ -888,6 +932,122 @@ async function handlePlayerSearch(event) {
   }
 }
 
+function buildHittingCardTable(seasonStats, careerStats, seasonLabel) {
+  const showSeason = seasonStats && seasonLabel !== 'Career';
+  const careerRow = careerStats || seasonStats;
+  if (!showSeason && !careerRow) return '';
+
+  const renderRow = (label, s, isTotal = false) => `
+    <tr class="${isTotal ? 'bg-[#efe4c8] border-t-2 border-navy font-extrabold text-navy' : 'bg-[#fdf8ec] text-slate-800 border-t border-amber-200/80'}">
+      <td class="px-2.5 py-1.5 font-sans font-bold text-left whitespace-nowrap">${escapeHtml(label)}</td>
+      <td class="px-2 py-1.5 text-right">${s.games ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.at_bats ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.runs ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.hits ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.doubles ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.triples ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.hr ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.rbi ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.sb ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.walks ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${escapeHtml(s.avg ?? '—')}</td>
+      <td class="px-2.5 py-1.5 text-right">${escapeHtml(s.ops ?? '—')}</td>
+    </tr>
+  `;
+
+  return `
+    <div class="space-y-1.5">
+      <div class="flex items-center justify-between">
+        <h4 class="text-[11px] font-black uppercase tracking-[0.14em] text-ballred">Major League Batting Record</h4>
+        ${showSeason ? `<span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Latest Season &amp; Career</span>` : ''}
+      </div>
+      <div class="overflow-x-auto rounded-lg border-2 border-navy shadow-inner">
+        <table class="w-full text-xs font-mono tabular-nums border-collapse">
+          <thead>
+            <tr class="bg-navy text-gold font-sans text-[11px] font-extrabold uppercase tracking-wider">
+              <th class="px-2.5 py-1.5 text-left">YR</th>
+              <th class="px-2 py-1.5 text-right">G</th>
+              <th class="px-2 py-1.5 text-right">AB</th>
+              <th class="px-2 py-1.5 text-right">R</th>
+              <th class="px-2 py-1.5 text-right">H</th>
+              <th class="px-2 py-1.5 text-right">2B</th>
+              <th class="px-2 py-1.5 text-right">3B</th>
+              <th class="px-2 py-1.5 text-right">HR</th>
+              <th class="px-2 py-1.5 text-right">RBI</th>
+              <th class="px-2 py-1.5 text-right">SB</th>
+              <th class="px-2 py-1.5 text-right">BB</th>
+              <th class="px-2 py-1.5 text-right">AVG</th>
+              <th class="px-2.5 py-1.5 text-right">OPS</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${showSeason ? renderRow(String(seasonStats.season || seasonLabel), seasonStats, false) : ''}
+            ${careerRow ? renderRow('MLB TOTALS', careerRow, true) : ''}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function buildPitchingCardTable(seasonStats, careerStats, seasonLabel) {
+  const showSeason = seasonStats && seasonLabel !== 'Career';
+  const careerRow = careerStats || seasonStats;
+  if (!showSeason && !careerRow) return '';
+
+  const renderRow = (label, s, isTotal = false) => `
+    <tr class="${isTotal ? 'bg-[#efe4c8] border-t-2 border-navy font-extrabold text-navy' : 'bg-[#fdf8ec] text-slate-800 border-t border-amber-200/80'}">
+      <td class="px-2.5 py-1.5 font-sans font-bold text-left whitespace-nowrap">${escapeHtml(label)}</td>
+      <td class="px-2 py-1.5 text-right">${s.wins ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.losses ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${escapeHtml(s.era ?? '—')}</td>
+      <td class="px-2 py-1.5 text-right">${s.games ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.games_started ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.saves ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${escapeHtml(s.innings_pitched ?? '—')}</td>
+      <td class="px-2 py-1.5 text-right">${s.hits ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.earned_runs ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.walks ?? '—'}</td>
+      <td class="px-2 py-1.5 text-right">${s.strikeouts ?? '—'}</td>
+      <td class="px-2.5 py-1.5 text-right">${escapeHtml(s.whip ?? '—')}</td>
+    </tr>
+  `;
+
+  return `
+    <div class="space-y-1.5">
+      <div class="flex items-center justify-between">
+        <h4 class="text-[11px] font-black uppercase tracking-[0.14em] text-ballred">Major League Pitching Record</h4>
+        ${showSeason ? `<span class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Latest Season &amp; Career</span>` : ''}
+      </div>
+      <div class="overflow-x-auto rounded-lg border-2 border-navy shadow-inner">
+        <table class="w-full text-xs font-mono tabular-nums border-collapse">
+          <thead>
+            <tr class="bg-navy text-gold font-sans text-[11px] font-extrabold uppercase tracking-wider">
+              <th class="px-2.5 py-1.5 text-left">YR</th>
+              <th class="px-2 py-1.5 text-right">W</th>
+              <th class="px-2 py-1.5 text-right">L</th>
+              <th class="px-2 py-1.5 text-right">ERA</th>
+              <th class="px-2 py-1.5 text-right">G</th>
+              <th class="px-2 py-1.5 text-right">GS</th>
+              <th class="px-2 py-1.5 text-right">SV</th>
+              <th class="px-2 py-1.5 text-right">IP</th>
+              <th class="px-2 py-1.5 text-right">H</th>
+              <th class="px-2 py-1.5 text-right">ER</th>
+              <th class="px-2 py-1.5 text-right">BB</th>
+              <th class="px-2 py-1.5 text-right">SO</th>
+              <th class="px-2.5 py-1.5 text-right">WHIP</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${showSeason ? renderRow(String(seasonStats.season || seasonLabel), seasonStats, false) : ''}
+            ${careerRow ? renderRow('MLB TOTALS', careerRow, true) : ''}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 async function viewPlayerDetails(playerId) {
   const card = document.getElementById('player-detail-card');
   card.classList.remove('hidden');
@@ -899,59 +1059,39 @@ async function viewPlayerDetails(playerId) {
     const p = data.player;
     const isFav = STATE.favoritePlayerIds.has(p.player_id);
 
-    const h = p.hitting_stats;
-    const pit = p.pitching_stats;
+    const hittingTable = buildHittingCardTable(p.hitting_stats, p.career_hitting_stats, p.season_used);
+    const pitchingTable = buildPitchingCardTable(p.pitching_stats, p.career_pitching_stats, p.season_used);
 
     let statsHtml = '';
-    if (h) {
-      statsHtml += `
-        <div>
-          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-            Hitting Stats (${escapeHtml(h.season || p.season_used || '')})
-          </h4>
-          <div class="grid grid-cols-4 sm:grid-cols-7 gap-2 text-center">
-            ${statBox('AVG', h.avg)}
-            ${statBox('OBP', h.obp)}
-            ${statBox('SLG', h.slg)}
-            ${statBox('OPS', h.ops)}
-            ${statBox('HR', h.hr)}
-            ${statBox('RBI', h.rbi)}
-            ${statBox('SB', h.sb)}
-          </div>
-        </div>
-      `;
+    if (p.is_pitcher) {
+      statsHtml = [pitchingTable, hittingTable].filter(Boolean).join('<div class="mt-4"></div>');
+    } else {
+      statsHtml = [hittingTable, pitchingTable].filter(Boolean).join('<div class="mt-4"></div>');
     }
-    if (pit) {
-      statsHtml += `
-        <div class="mt-4">
-          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-            Pitching Stats (${escapeHtml(pit.season || p.season_used || '')})
-          </h4>
-          <div class="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center">
-            ${statBox('ERA', pit.era)}
-            ${statBox('WHIP', pit.whip)}
-            ${statBox('K', pit.strikeouts)}
-            ${statBox('IP', pit.innings_pitched)}
-            ${statBox('W-L', pit.w_l)}
-          </div>
-        </div>
-      `;
+    if (!statsHtml) {
+      statsHtml = '<p class="text-sm text-slate-600">No MLB stats available for this player.</p>';
     }
-    if (!h && !pit) {
-      statsHtml = '<p class="text-sm text-slate-500">No season stats available for this player.</p>';
-    }
+
+    const vitals = [
+      p.height ? `HT: <strong>${escapeHtml(p.height)}</strong>` : '',
+      p.weight ? `WT: <strong>${escapeHtml(String(p.weight))} lbs</strong>` : '',
+      `BATS: <strong>${escapeHtml(p.bats || '—')}</strong>`,
+      `THROWS: <strong>${escapeHtml(p.throws || '—')}</strong>`,
+      p.age ? `AGE: <strong>${p.age}</strong>` : '',
+      p.mlb_debut_date ? `DEBUT: <strong>${escapeHtml(p.mlb_debut_date)}</strong>` : '',
+    ].filter(Boolean).join(' <span class="text-amber-500">•</span> ');
 
     const logs = p.last_5_games || [];
     const logsHtml = logs.length
-      ? `<div class="mt-4">
-           <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Last 5 Games</h4>
+      ? `<div class="pt-3 border-t border-amber-300/70">
+           <h4 class="text-[11px] font-black uppercase tracking-[0.14em] text-navy mb-2">Recent Game Log (Last 5 Games)</h4>
            <div class="space-y-1.5">
              ${logs
                .map(
                  (g) => `
-               <div class="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                 <span class="font-semibold text-navy">${escapeHtml(g.date)} • ${escapeHtml(g.matchup)}</span>
-                 <span class="font-medium text-slate-700">${escapeHtml(g.summary)}</span>
+               <div class="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm bg-[#f4ebd4]/80 rounded-lg px-3 py-1.5 border border-amber-300/60">
+                 <span class="font-bold text-navy">${escapeHtml(g.date)} • ${escapeHtml(g.matchup)}</span>
+                 <span class="font-mono font-semibold text-slate-800">${escapeHtml(g.summary)}</span>
                </div>
              `
                )
@@ -961,36 +1101,42 @@ async function viewPlayerDetails(playerId) {
       : '';
 
     card.innerHTML = `
-      <div class="bg-slate-50/70 border border-slate-200 rounded-2xl p-5 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div class="flex items-center gap-4">
-            <img src="${escapeHtml(p.headshot_url)}" alt="${escapeHtml(p.full_name)}"
-              class="w-20 h-20 rounded-full object-cover bg-white border-4 border-gold shadow-sm shrink-0" />
+      <div class="bg-[#fdf8ec] border-2 border-navy rounded-2xl shadow-md overflow-hidden">
+        <!-- Classic Baseball Card Back Header -->
+        <div class="bg-navy text-white px-5 py-3.5 border-b-4 border-ballred flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-3.5">
+            ${p.jersey_number ? `<div class="w-11 h-11 rounded-lg bg-gold text-navy font-black text-lg flex items-center justify-center shrink-0 shadow-sm">#${escapeHtml(p.jersey_number)}</div>` : ''}
             <div>
               <div class="flex items-center gap-2 flex-wrap">
-                <h3 class="text-2xl font-extrabold text-navy">${escapeHtml(p.full_name)}</h3>
-                ${p.jersey_number ? `<span class="text-sm font-bold px-2 py-0.5 rounded bg-navy text-white">#${escapeHtml(p.jersey_number)}</span>` : ''}
+                <h3 class="text-xl sm:text-2xl font-black uppercase tracking-wide text-white">${escapeHtml(p.full_name)}</h3>
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${p.active ? 'bg-turf text-white' : 'bg-slate-600 text-slate-100'}">${p.active ? 'Active' : 'Historical'}</span>
               </div>
-              <p class="text-sm text-slate-600 font-medium">${escapeHtml(p.position_name)} • ${escapeHtml(p.team_name)}</p>
-              <p class="text-xs text-slate-500 mt-0.5">
-                Bats/Throws: <strong>${escapeHtml(p.bats)}/${escapeHtml(p.throws)}</strong>
-                ${p.age ? ` • Age: <strong>${p.age}</strong>` : ''}
-              </p>
+              <p class="text-xs sm:text-sm text-gold font-bold uppercase tracking-wider">${escapeHtml(p.position_name)} • ${escapeHtml(p.team_name)}</p>
             </div>
           </div>
 
           <button onclick="${isFav ? `removeFavoritePlayer(${p.player_id})` : `addFavoritePlayer(${p.player_id})`}"
-            class="px-4 py-2 rounded-xl text-sm font-bold transition shadow-sm shrink-0 ${
+            class="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition shadow-sm shrink-0 ${
               isFav
-                ? 'bg-slate-200 hover:bg-slate-300 text-slate-800'
+                ? 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
                 : 'bg-gold hover:bg-yellow-400 text-navy'
             }">
             ${isFav ? '⭐ In My MVPs (Remove)' : '☆ Add to My MVPs'}
           </button>
         </div>
 
-        ${statsHtml}
-        ${logsHtml}
+        <!-- Vitals / Bio Strip -->
+        <div class="bg-[#f4ebd4] border-b border-amber-300/80 px-5 py-2.5 flex items-center gap-3.5">
+          <img src="${escapeHtml(p.headshot_url)}" alt="${escapeHtml(p.full_name)}"
+            class="w-12 h-12 rounded-full object-cover bg-white border-2 border-navy shrink-0 shadow-sm" />
+          <div class="text-xs text-navy leading-relaxed">${vitals}</div>
+        </div>
+
+        <!-- Card Back Stats & Game Log -->
+        <div class="p-4 sm:p-5 space-y-4">
+          ${statsHtml}
+          ${logsHtml}
+        </div>
       </div>
     `;
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });

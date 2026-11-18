@@ -303,12 +303,7 @@ function closeSettingsModal() {
 }
 
 function syncAutoRefreshFromSettings() {
-  const settingsAuto = document.getElementById('settings-auto-refresh');
-  const autoToggle = document.getElementById('auto-refresh-toggle');
-  if (settingsAuto && autoToggle) {
-    autoToggle.checked = settingsAuto.checked;
-    toggleAutoRefresh();
-  }
+  toggleAutoRefresh();
 }
 
 async function saveSettings() {
@@ -333,9 +328,8 @@ async function resetToPhillies() {
 }
 
 function toggleAutoRefresh() {
-  const checked = document.getElementById('auto-refresh-toggle').checked;
   const settingsAuto = document.getElementById('settings-auto-refresh');
-  if (settingsAuto) settingsAuto.checked = checked;
+  const checked = settingsAuto ? settingsAuto.checked : false;
   if (STATE.autoRefreshTimer) {
     clearInterval(STATE.autoRefreshTimer);
     STATE.autoRefreshTimer = null;

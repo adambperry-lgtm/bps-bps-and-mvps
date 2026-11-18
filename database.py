@@ -139,6 +139,7 @@ def list_sessions() -> list[dict]:
                    (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id = s.id) AS message_count
             FROM chat_sessions s
             ORDER BY s.updated_at DESC
+            LIMIT 10
             """
         ).fetchall()
     return [dict(r) for r in rows]

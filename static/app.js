@@ -82,55 +82,152 @@ function switchTab(tab) {
 
 // --- FEATURE 1: DUGOUT CHAT ---
 
+const MAX_RECENT_CHATS = 10;
+
+function getRecentChats() {
+  try {
+    const raw = localStorage.getItem('bp_recent_chats');
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentChats(chats) {
+  try {
+    const sorted = [...chats]
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+      .slice(0, MAX_RECENT_CHATS);
+    localStorage.setItem('bp_recent_chats', JSON.stringify(sorted));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function upsertRecentChat(sessionId, { title, messages, appendMessages } = {}) {
+  if (!sessionId) return;
+  const chats = getRecentChats();
+  const idx = chats.findIndex((c) => c.id === sessionId);
+  const existing = idx >= 0 ? chats[idx] : { id: sessionId, title: 'New Dugout Chat', messages: [] };
+
+  let nextMessages = Array.isArray(existing.messages) ? [...existing.messages] : [];
+  if (Array.isArray(messages)) {
+    nextMessages = messages;
+  } else if (Array.isArray(appendMessages) && appendMessages.length) {
+    nextMessages = [...nextMessages, ...appendMessages];
+  }
+
+  let nextTitle = title || existing.title || 'New Dugout Chat';
+  if (nextTitle === 'New Dugout Chat' && nextMessages.length) {
+    const firstUser = nextMessages.find((m) => m.role === 'user');
+    if (firstUser && firstUser.content) {
+      nextTitle = firstUser.content.trim().slice(0, 48);
+    }
+  }
+
+  const updated = {
+    id: sessionId,
+    title: nextTitle,
+    updatedAt: new Date().toISOString(),
+    messages: nextMessages,
+  };
+
+  if (idx >= 0) {
+    chats.splice(idx, 1);
+  }
+  chats.unshift(updated);
+  saveRecentChats(chats);
+}
+
 async function initChat() {
   await refreshSessionDropdown();
   if (!STATE.sessionId) {
-    await startNewChat(false);
+    await startNewChat(true);
   } else {
     await loadChatMessages(STATE.sessionId);
   }
 }
 
 async function refreshSessionDropdown() {
+  const select = document.getElementById('chat-session-select');
+  if (!select) return;
+
+  let serverSessions = [];
   try {
-    const res = await fetch('/api/chat/sessions');
+    const res = await fetch('/api/chat/sessions', { cache: 'no-store' });
     const data = await res.json();
-    const select = document.getElementById('chat-session-select');
-    select.innerHTML = '';
-
-    const sessions = data.sessions || [];
-    if (!sessions.length) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = 'Current Dugout Chat';
-      select.appendChild(opt);
-      return;
-    }
-
-    if (!STATE.sessionId) {
-      STATE.sessionId = sessions[0].id;
-      localStorage.setItem('bp_active_session_id', STATE.sessionId);
-    }
-
-    for (const s of sessions) {
-      const opt = document.createElement('option');
-      opt.value = s.id;
-      opt.textContent = s.title || 'Dugout Chat';
-      if (s.id === STATE.sessionId) opt.selected = true;
-      select.appendChild(opt);
-    }
+    serverSessions = data.sessions || [];
   } catch (err) {
     console.error('Failed to load sessions', err);
+  }
+
+  // Merge server sessions with localStorage recent chats (keeps last 10 even across redeploys)
+  const localChats = getRecentChats();
+  const byId = new Map();
+
+  for (const lc of localChats) {
+    if (lc && lc.id) {
+      byId.set(lc.id, {
+        id: lc.id,
+        title: lc.title || 'Dugout Chat',
+        updatedAt: lc.updatedAt || '',
+        messages: Array.isArray(lc.messages) ? lc.messages : [],
+      });
+    }
+  }
+
+  for (const s of serverSessions) {
+    if (!s || !s.id) continue;
+    const prev = byId.get(s.id);
+    byId.set(s.id, {
+      id: s.id,
+      title: s.title || prev?.title || 'Dugout Chat',
+      updatedAt: s.updated_at || prev?.updatedAt || new Date().toISOString(),
+      messages: prev?.messages || [],
+    });
+  }
+
+  const merged = Array.from(byId.values())
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+    .slice(0, MAX_RECENT_CHATS);
+
+  saveRecentChats(merged);
+
+  select.innerHTML = '';
+  if (!merged.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'Current Dugout Chat';
+    select.appendChild(opt);
+    return;
+  }
+
+  if (!STATE.sessionId || !merged.some((s) => s.id === STATE.sessionId)) {
+    STATE.sessionId = merged[0].id;
+    localStorage.setItem('bp_active_session_id', STATE.sessionId);
+  }
+
+  for (const s of merged) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.title || 'Dugout Chat';
+    if (s.id === STATE.sessionId) opt.selected = true;
+    select.appendChild(opt);
   }
 }
 
 async function startNewChat(refreshDropdown = true) {
   stopSpeaking();
   try {
-    const res = await fetch('/api/chat/sessions', { method: 'POST' });
+    const res = await fetch('/api/chat/sessions', { method: 'POST', cache: 'no-store' });
     const data = await res.json();
     STATE.sessionId = data.session.id;
     localStorage.setItem('bp_active_session_id', STATE.sessionId);
+    upsertRecentChat(STATE.sessionId, {
+      title: data.session.title || 'New Dugout Chat',
+      messages: [],
+    });
     if (refreshDropdown) {
       await refreshSessionDropdown();
     }
@@ -150,13 +247,21 @@ async function loadSelectedSession() {
 
 async function loadChatMessages(sessionId) {
   try {
-    const res = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`);
+    const res = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`, { cache: 'no-store' });
     const data = await res.json();
-    renderChatMessages(data.messages || []);
+    const serverMsgs = data.messages || [];
+    if (serverMsgs.length) {
+      upsertRecentChat(sessionId, { messages: serverMsgs });
+      renderChatMessages(serverMsgs);
+      return;
+    }
   } catch (err) {
     console.error('Failed to load messages', err);
-    renderChatMessages([]);
   }
+
+  // Fallback to localStorage cached messages if server DB was reset
+  const local = getRecentChats().find((c) => c.id === sessionId);
+  renderChatMessages(local?.messages || []);
 }
 
 function renderChatMessages(messages) {
@@ -278,6 +383,12 @@ async function sendChatMessage(msg) {
     }
     const reply = data.reply || 'Let’s talk baseball!';
     appendMessageBubble('assistant', reply);
+    upsertRecentChat(STATE.sessionId, {
+      appendMessages: [
+        { role: 'user', content: msg },
+        { role: 'assistant', content: reply },
+      ],
+    });
     if (STATE.voiceAutoSpeak) {
       speakText(reply);
     }

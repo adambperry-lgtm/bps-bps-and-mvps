@@ -966,8 +966,11 @@ function renderTeamLiveCard(favTeam, liveStatus) {
 
   card.innerHTML = `
     <div class="flex items-center justify-between mb-3">
-      <span class="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-white/15 text-gold">
-        ⚾ ${escapeHtml(favTeam.team_name)}
+      <span class="inline-flex items-center gap-2 text-xs sm:text-sm font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-white/15 text-gold">
+        <img src="https://www.mlbstatic.com/team-logos/team-cap-on-dark/${escapeHtml(String(favTeam.team_id || 143))}.svg"
+          alt="${escapeHtml(favTeam.team_name)} logo"
+          class="w-5 h-5 object-contain shrink-0" />
+        <span>${escapeHtml(favTeam.team_name)}</span>
       </span>
     </div>
     ${todayHtml}

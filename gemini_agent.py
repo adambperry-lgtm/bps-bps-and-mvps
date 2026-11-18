@@ -127,6 +127,25 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
     )
 
     try:
+        import time
+
+        def _should_try_next_model(exc: Exception) -> bool:
+            s = str(exc)
+            return any(
+                k in s
+                for k in (
+                    "404",
+                    "NOT_FOUND",
+                    "no longer available",
+                    "503",
+                    "UNAVAILABLE",
+                    "high demand",
+                    "overloaded",
+                    "429",
+                    "RESOURCE_EXHAUSTED",
+                )
+            )
+
         response = None
         last_exc = None
         for model_id in MODEL_CANDIDATES:
@@ -140,17 +159,25 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
             except Exception as model_exc:
                 last_exc = model_exc
                 err_str = str(model_exc)
-                if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                if _should_try_next_model(model_exc):
+                    time.sleep(0.4)
                     continue
                 if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version")):
                     v1beta_client = _get_client(api_version="v1beta")
                     if v1beta_client is not None:
-                        response = v1beta_client.models.generate_content(
-                            model=model_id,
-                            contents=contents,
-                            config=config,
-                        )
-                        break
+                        try:
+                            response = v1beta_client.models.generate_content(
+                                model=model_id,
+                                contents=contents,
+                                config=config,
+                            )
+                            break
+                        except Exception as inner_exc:
+                            last_exc = inner_exc
+                            if _should_try_next_model(inner_exc):
+                                time.sleep(0.4)
+                                continue
+                            raise
                 raise
 
         if response is None and last_exc is not None:
@@ -300,6 +327,25 @@ def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
         ),
     )
 
+    import time
+
+    def _is_retryable(exc: Exception) -> bool:
+        s = str(exc)
+        return any(
+            k in s
+            for k in (
+                "404",
+                "NOT_FOUND",
+                "no longer available",
+                "503",
+                "UNAVAILABLE",
+                "high demand",
+                "overloaded",
+                "429",
+                "RESOURCE_EXHAUSTED",
+            )
+        )
+
     response = None
     last_exc = None
     for model_id in TTS_MODEL_CANDIDATES:
@@ -313,7 +359,8 @@ def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
         except Exception as exc:
             last_exc = exc
             err_str = str(exc)
-            if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+            if _is_retryable(exc):
+                time.sleep(0.4)
                 continue
             if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version")):
                 v1beta_client = _get_client(api_version="v1beta")
@@ -327,7 +374,8 @@ def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
                         break
                     except Exception as inner_exc:
                         last_exc = inner_exc
-                        if "404" in str(inner_exc) or "NOT_FOUND" in str(inner_exc):
+                        if _is_retryable(inner_exc):
+                            time.sleep(0.4)
                             continue
                         raise
             raise

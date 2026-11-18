@@ -43,6 +43,39 @@ TEAM_SLUGS: dict[int, str] = {
     158: "brewers",
 }
 
+TEAM_ABBRS: dict[int, str] = {
+    108: "LAA",
+    109: "AZ",
+    110: "BAL",
+    111: "BOS",
+    112: "CHC",
+    113: "CIN",
+    114: "CLE",
+    115: "COL",
+    116: "DET",
+    117: "HOU",
+    118: "KC",
+    119: "LAD",
+    120: "WSH",
+    121: "NYM",
+    133: "ATH",
+    134: "PIT",
+    135: "SD",
+    136: "SEA",
+    137: "SF",
+    138: "STL",
+    139: "TB",
+    140: "TEX",
+    141: "TOR",
+    142: "MIN",
+    143: "PHI",
+    144: "ATL",
+    145: "CWS",
+    146: "MIA",
+    147: "NYY",
+    158: "MIL",
+}
+
 
 class TTLCache:
     """Lightweight thread-safe in-memory TTL cache."""
@@ -374,23 +407,59 @@ def get_player_details(player_id: int) -> dict:
         except Exception:
             continue
 
-    # Always fetch career stats for active and historical players
+    # Always fetch career + yearByYear stats for active and historical players
     career_hitting_stats = None
     career_pitching_stats = None
+    year_by_year_hitting: list[dict] = []
+    year_by_year_pitching: list[dict] = []
+
+    def _extract_year_by_year(splits: list[dict], pitching: bool) -> list[dict]:
+        seasons_with_teams = {
+            s.get("season", "")
+            for s in splits
+            if (s.get("team") or {}).get("id") or (s.get("team") or {}).get("name")
+        }
+        rows: list[dict] = []
+        for s in splits:
+            yr = s.get("season", "")
+            team = s.get("team") or {}
+            tid = team.get("id")
+            tname = team.get("name", "")
+            if not tid and not tname and yr in seasons_with_teams:
+                continue
+            tabbr = (
+                TEAM_ABBRS.get(tid)
+                or team.get("abbreviation")
+                or (tname.split()[-1][:3].upper() if tname else "MLB")
+            )
+            extracted = _extract_pitching_stats([s]) if pitching else _extract_hitting_stats([s])
+            if extracted:
+                extracted["team_abbr"] = tabbr
+                extracted["team_name"] = tname or "MLB"
+                rows.append(extracted)
+        return rows
+
     try:
         c_data = _get_json(
             f"/people/{player_id}/stats",
-            params={"stats": "career", "group": "hitting,pitching"},
+            params={"stats": "career,yearByYear", "group": "hitting,pitching"},
         )
         for block in c_data.get("stats", []):
+            stype = (block.get("type") or {}).get("displayName", "")
             group = (block.get("group") or {}).get("displayName", "")
             splits = block.get("splits", [])
-            if group == "hitting" and splits:
+            if not splits:
+                continue
+            if stype == "career" and group == "hitting":
                 career_hitting_stats = _extract_hitting_stats(splits)
                 career_hitting_stats["season"] = "Career"
-            elif group == "pitching" and splits:
+            elif stype == "career" and group == "pitching":
                 career_pitching_stats = _extract_pitching_stats(splits)
                 career_pitching_stats["season"] = "Career"
+            elif stype == "yearByYear" and group == "hitting":
+                year_by_year_hitting = _extract_year_by_year(splits, pitching=False)
+            elif stype == "yearByYear" and group == "pitching":
+                year_by_year_pitching = _extract_year_by_year(splits, pitching=True)
     except Exception:
         pass
 
@@ -425,6 +494,8 @@ def get_player_details(player_id: int) -> dict:
         "pitching_stats": pitching_stats,
         "career_hitting_stats": career_hitting_stats,
         "career_pitching_stats": career_pitching_stats,
+        "year_by_year_hitting": year_by_year_hitting,
+        "year_by_year_pitching": year_by_year_pitching,
         "last_5_games": last_5_games,
     }
     _cache.set(cache_key, result, TTL_STATS)

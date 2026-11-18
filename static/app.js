@@ -12,6 +12,9 @@ const STATE = {
   ttsVoice: localStorage.getItem('bp_tts_voice') || 'Puck',
   currentAudio: null,
   readerPlainText: '',
+  standingsTab: 'division',
+  lastFavTeam: null,
+  lastTeamLiveStatus: null,
 };
 
 const WELCOME_MESSAGE =
@@ -817,6 +820,13 @@ async function loadFavorites(showSpinner = false) {
   }
 }
 
+function switchStandingsTab(tab) {
+  STATE.standingsTab = tab === 'wildcard' ? 'wildcard' : 'division';
+  if (STATE.lastFavTeam) {
+    renderTeamLiveCard(STATE.lastFavTeam, STATE.lastTeamLiveStatus);
+  }
+}
+
 function renderTeamLiveCard(favTeam, liveStatus) {
   const card = document.getElementById('team-live-card');
   if (!favTeam) {
@@ -828,10 +838,14 @@ function renderTeamLiveCard(favTeam, liveStatus) {
     return;
   }
 
+  STATE.lastFavTeam = favTeam;
+  STATE.lastTeamLiveStatus = liveStatus;
+
   const todayGame = liveStatus?.today_game;
   const nextGame = liveStatus?.next_game;
   const lastFinal = liveStatus?.last_final_game;
   const divStandings = liveStatus?.division_standings;
+  const wcStandings = liveStatus?.wildcard_standings;
 
   let todayHtml = '';
   if (todayGame) {
@@ -873,37 +887,72 @@ function renderTeamLiveCard(favTeam, liveStatus) {
     `;
   }
 
-  const standingsRows = (divStandings?.teams || [])
-    .map((t) => {
-      const isFavTeam = t.name === favTeam.team_name;
-      return `
-        <tr class="${isFavTeam ? 'bg-gold/20 text-gold font-extrabold' : 'text-slate-100 border-t border-white/10'}">
-          <td class="py-1.5 px-2 text-left truncate">${escapeHtml(t.name)}</td>
-          <td class="py-1.5 px-2 text-right font-mono">${t.w ?? '—'}</td>
-          <td class="py-1.5 px-2 text-right font-mono">${t.l ?? '—'}</td>
-          <td class="py-1.5 px-2 text-right font-mono">${escapeHtml(String(t.gb ?? '—'))}</td>
-        </tr>
-      `;
-    })
-    .join('');
+  const isWc = STATE.standingsTab === 'wildcard' && wcStandings?.teams?.length;
+  const activeStandings = isWc ? wcStandings : divStandings;
+  const activeTitle = isWc
+    ? `${wcStandings.league_name || 'League'} Wild Card`
+    : `${divStandings?.division_name || 'Division'} Standings`;
 
-  const standingsHtml = divStandings?.teams?.length
+  const standingsRows = isWc
+    ? (wcStandings.teams || [])
+        .map((t, idx) => {
+          const isFavTeam = t.name === favTeam.team_name;
+          const cutoffBorder = idx === 2 ? 'border-b-2 border-dashed border-gold/60' : '';
+          return `
+            <tr class="${isFavTeam ? 'bg-gold/20 text-gold font-extrabold' : 'text-slate-100 border-t border-white/10'} ${cutoffBorder}">
+              <td class="py-1.5 px-2 text-left font-mono text-slate-300">${escapeHtml(String(t.rank ?? idx + 1))}</td>
+              <td class="py-1.5 px-2 text-left truncate">${escapeHtml(t.name)}</td>
+              <td class="py-1.5 px-2 text-right font-mono">${t.w ?? '—'}</td>
+              <td class="py-1.5 px-2 text-right font-mono">${t.l ?? '—'}</td>
+              <td class="py-1.5 px-2 text-right font-mono">${escapeHtml(String(t.wc_gb ?? '—'))}</td>
+            </tr>
+          `;
+        })
+        .join('')
+    : (divStandings?.teams || [])
+        .map((t) => {
+          const isFavTeam = t.name === favTeam.team_name;
+          return `
+            <tr class="${isFavTeam ? 'bg-gold/20 text-gold font-extrabold' : 'text-slate-100 border-t border-white/10'}">
+              <td class="py-1.5 px-2 text-left truncate">${escapeHtml(t.name)}</td>
+              <td class="py-1.5 px-2 text-right font-mono">${t.w ?? '—'}</td>
+              <td class="py-1.5 px-2 text-right font-mono">${t.l ?? '—'}</td>
+              <td class="py-1.5 px-2 text-right font-mono">${escapeHtml(String(t.gb ?? '—'))}</td>
+            </tr>
+          `;
+        })
+        .join('');
+
+  const standingsHtml = activeStandings?.teams?.length
     ? `
       <div class="mt-3 bg-white/10 rounded-lg p-3">
-        <div class="flex items-center justify-between mb-2">
-          <div class="text-xs uppercase tracking-wider text-slate-300 font-bold">
-            ${escapeHtml(divStandings.division_name || 'Division')} Standings
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+          <div class="flex items-center gap-2">
+            <span class="text-xs uppercase tracking-wider text-slate-200 font-bold">
+              ${escapeHtml(activeTitle)}
+            </span>
+            ${activeStandings.season ? `<span class="text-[11px] font-bold text-gold">${escapeHtml(String(activeStandings.season))}</span>` : ''}
           </div>
-          ${divStandings.season ? `<span class="text-[11px] font-bold text-gold">${escapeHtml(String(divStandings.season))}</span>` : ''}
+          <div class="inline-flex rounded-full bg-black/25 p-0.5 text-[11px] font-bold">
+            <button type="button" onclick="switchStandingsTab('division')"
+              class="px-2.5 py-1 rounded-full transition ${!isWc ? 'bg-gold text-navy' : 'text-slate-200 hover:text-white'}">
+              Division
+            </button>
+            <button type="button" onclick="switchStandingsTab('wildcard')"
+              class="px-2.5 py-1 rounded-full transition ${isWc ? 'bg-gold text-navy' : 'text-slate-200 hover:text-white'}">
+              Wild Card
+            </button>
+          </div>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-xs border-collapse">
             <thead>
               <tr class="text-[11px] uppercase tracking-wider text-slate-300 border-b border-white/15">
+                ${isWc ? '<th class="py-1 px-2 text-left">#</th>' : ''}
                 <th class="py-1 px-2 text-left">Team</th>
                 <th class="py-1 px-2 text-right">W</th>
                 <th class="py-1 px-2 text-right">L</th>
-                <th class="py-1 px-2 text-right">GB</th>
+                <th class="py-1 px-2 text-right">${isWc ? 'WCGB' : 'GB'}</th>
               </tr>
             </thead>
             <tbody>

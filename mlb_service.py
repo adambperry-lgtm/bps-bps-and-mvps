@@ -590,6 +590,59 @@ def _get_team_division_standings(team_id: int) -> Optional[dict]:
     return None
 
 
+def _get_team_wildcard_standings(team_id: int) -> Optional[dict]:
+    try:
+        team_info = next((t for t in get_mlb_teams() if t.get("team_id") == team_id), None)
+        league_name = (team_info or {}).get("league") or "National League"
+        league_id = 103 if "American" in league_name else 104
+
+        cache_key = f"wc_standings:{league_id}"
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        current_year = datetime.now().year
+        for yr in (current_year, current_year - 1):
+            try:
+                data = _get_json(
+                    "/standings",
+                    params={
+                        "leagueId": league_id,
+                        "season": yr,
+                        "standingsTypes": "wildCard",
+                        "hydrate": "team",
+                    },
+                )
+                records = data.get("records") or []
+                if not records:
+                    continue
+                team_records = records[0].get("teamRecords") or []
+                if not team_records:
+                    continue
+                teams = [
+                    {
+                        "rank": r.get("wildCardRank") or str(idx + 1),
+                        "name": (r.get("team") or {}).get("name"),
+                        "w": r.get("wins"),
+                        "l": r.get("losses"),
+                        "wc_gb": r.get("wildCardGamesBack", "—"),
+                    }
+                    for idx, r in enumerate(team_records)
+                ]
+                res = {
+                    "season": yr,
+                    "league_name": league_name,
+                    "teams": teams,
+                }
+                _cache.set(cache_key, res, TTL_STATS)
+                return res
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def get_team_live_status(team_id: int) -> dict:
     cache_key = f"team_live:{team_id}"
     cached = _cache.get(cache_key)
@@ -665,6 +718,7 @@ def get_team_live_status(team_id: int) -> dict:
         "next_game": next_game,
         "last_final_game": last_final_game,
         "division_standings": _get_team_division_standings(team_id),
+        "wildcard_standings": _get_team_wildcard_standings(team_id),
     }
     _cache.set(cache_key, result, TTL_LIVE)
     return result

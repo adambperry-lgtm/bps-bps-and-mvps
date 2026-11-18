@@ -711,7 +711,7 @@ function renderTeamLiveCard(favTeam, liveStatus) {
   if (!favTeam) {
     card.innerHTML = `
       <div class="text-center py-4">
-        <p class="text-sm text-slate-300">Select your favorite MLB team on the left to see live game updates, next scheduled game, and recent scores!</p>
+        <p class="text-sm text-slate-300">Select your favorite MLB team in Settings to see live game updates, next scheduled game, recent scores, and standings!</p>
       </div>
     `;
     return;
@@ -720,7 +720,9 @@ function renderTeamLiveCard(favTeam, liveStatus) {
   const todayGame = liveStatus?.today_game;
   const nextGame = liveStatus?.next_game;
   const lastFinal = liveStatus?.last_final_game;
+  const divStandings = liveStatus?.division_standings;
 
+  let todayHtml = '';
   if (todayGame) {
     const isLive = todayGame.abstract_state === 'Live';
     const badgeColor = isLive ? 'bg-ballred text-white animate-pulse' : 'bg-gold text-navy';
@@ -736,56 +738,100 @@ function renderTeamLiveCard(favTeam, liveStatus) {
          </div>`
       : '';
 
-    card.innerHTML = `
-      <div class="flex items-center justify-between gap-2 mb-2">
-        <span class="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${badgeColor}">${escapeHtml(statusLabel)}</span>
-        <span class="text-xs text-slate-300">${escapeHtml(todayGame.venue || '')}</span>
-      </div>
-      <div class="grid grid-cols-3 items-center text-center py-1">
-        <div>
-          <div class="text-xs text-slate-300 uppercase">Away</div>
-          <div class="font-bold text-base sm:text-lg">${escapeHtml(todayGame.away_team)}</div>
-          <div class="text-2xl font-extrabold text-gold">${todayGame.away_score ?? '—'}</div>
+    todayHtml = `
+      <div class="bg-white/10 rounded-xl p-3.5 mb-3">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <span class="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${badgeColor}">${escapeHtml(statusLabel)}</span>
+          <span class="text-xs text-slate-300">${escapeHtml(todayGame.venue || '')}</span>
         </div>
-        <div class="text-xs font-bold text-slate-400">VS</div>
-        <div>
-          <div class="text-xs text-slate-300 uppercase">Home</div>
-          <div class="font-bold text-base sm:text-lg">${escapeHtml(todayGame.home_team)}</div>
-          <div class="text-2xl font-extrabold text-gold">${todayGame.home_score ?? '—'}</div>
+        <div class="grid grid-cols-3 items-center text-center py-1">
+          <div>
+            <div class="text-xs text-slate-300 uppercase">Away</div>
+            <div class="font-bold text-base sm:text-lg">${escapeHtml(todayGame.away_team)}</div>
+            <div class="text-2xl font-extrabold text-gold">${todayGame.away_score ?? '—'}</div>
+          </div>
+          <div class="text-xs font-bold text-slate-400">VS</div>
+          <div>
+            <div class="text-xs text-slate-300 uppercase">Home</div>
+            <div class="font-bold text-base sm:text-lg">${escapeHtml(todayGame.home_team)}</div>
+            <div class="text-2xl font-extrabold text-gold">${todayGame.home_score ?? '—'}</div>
+          </div>
         </div>
+        ${countHtml}
       </div>
-      ${countHtml}
     `;
-    return;
   }
 
-  // No game today -> show next scheduled game & most recent final score
+  const standingsRows = (divStandings?.teams || [])
+    .map((t) => {
+      const isFavTeam = t.name === favTeam.team_name;
+      return `
+        <tr class="${isFavTeam ? 'bg-gold/20 text-gold font-extrabold' : 'text-slate-100 border-t border-white/10'}">
+          <td class="py-1.5 px-2 text-left truncate">${escapeHtml(t.name)}</td>
+          <td class="py-1.5 px-2 text-right font-mono">${t.w ?? '—'}</td>
+          <td class="py-1.5 px-2 text-right font-mono">${t.l ?? '—'}</td>
+          <td class="py-1.5 px-2 text-right font-mono">${escapeHtml(String(t.gb ?? '—'))}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const standingsHtml = divStandings?.teams?.length
+    ? `
+      <div class="mt-3 bg-white/10 rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-xs uppercase tracking-wider text-slate-300 font-bold">
+            ${escapeHtml(divStandings.division_name || 'Division')} Standings
+          </div>
+          ${divStandings.season ? `<span class="text-[11px] font-bold text-gold">${escapeHtml(String(divStandings.season))}</span>` : ''}
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="text-[11px] uppercase tracking-wider text-slate-300 border-b border-white/15">
+                <th class="py-1 px-2 text-left">Team</th>
+                <th class="py-1 px-2 text-right">W</th>
+                <th class="py-1 px-2 text-right">L</th>
+                <th class="py-1 px-2 text-right">GB</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${standingsRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `
+    : '';
+
   card.innerHTML = `
-    <div class="flex items-center justify-between mb-2">
+    <div class="flex items-center justify-between mb-3">
       <span class="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-white/15 text-gold">
-        ${escapeHtml(favTeam.team_name)} • Off Day / Offseason
+        ⚾ ${escapeHtml(favTeam.team_name)}
       </span>
     </div>
+    ${todayHtml}
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
       <div class="bg-white/10 rounded-lg p-3">
-        <div class="text-xs uppercase tracking-wider text-slate-300 font-bold mb-1">Next Scheduled Game</div>
+        <div class="text-xs uppercase tracking-wider text-slate-300 font-bold mb-1">Next Game</div>
         ${
           nextGame
             ? `<div class="font-semibold">${escapeHtml(nextGame.away_team)} @ ${escapeHtml(nextGame.home_team)}</div>
-               <div class="text-xs text-slate-300 mt-0.5">${escapeHtml(nextGame.game_date)} • ${escapeHtml(nextGame.venue || '')}</div>`
+               <div class="text-xs text-slate-300 mt-0.5">${escapeHtml(nextGame.game_date)}${nextGame.venue ? ` • ${escapeHtml(nextGame.venue)}` : ''}</div>`
             : `<div class="text-xs text-slate-300">No upcoming games on the schedule right now.</div>`
         }
       </div>
       <div class="bg-white/10 rounded-lg p-3">
-        <div class="text-xs uppercase tracking-wider text-slate-300 font-bold mb-1">Most Recent Final</div>
+        <div class="text-xs uppercase tracking-wider text-slate-300 font-bold mb-1">Most Recent Game</div>
         ${
           lastFinal
             ? `<div class="font-semibold">${escapeHtml(lastFinal.away_team)} ${lastFinal.away_score ?? 0} – ${lastFinal.home_score ?? 0} ${escapeHtml(lastFinal.home_team)}</div>
                <div class="text-xs text-slate-300 mt-0.5">Final • ${escapeHtml(lastFinal.game_date)}</div>`
-            : `<div class="text-xs text-slate-300">No recent final game in the last 10 days.</div>`
+            : `<div class="text-xs text-slate-300">No recent final game found.</div>`
         }
       </div>
     </div>
+    ${standingsHtml}
   `;
 }
 

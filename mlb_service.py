@@ -534,6 +534,37 @@ def _parse_game_summary(g: dict) -> dict:
     }
 
 
+def _get_team_division_standings(team_id: int) -> Optional[dict]:
+    try:
+        team_info = next((t for t in get_mlb_teams() if t.get("team_id") == team_id), None)
+        div_name = team_info.get("division") if team_info else None
+        team_name = team_info.get("team_name") if team_info else None
+        standings = get_standings("all")
+        divisions = standings.get("divisions") or {}
+
+        matched_div = None
+        matched_teams = None
+        if div_name and div_name in divisions:
+            matched_div = div_name
+            matched_teams = divisions[div_name]
+        elif team_name:
+            for dname, tlist in divisions.items():
+                if any(t.get("name") == team_name for t in tlist):
+                    matched_div = dname
+                    matched_teams = tlist
+                    break
+
+        if matched_div and matched_teams is not None:
+            return {
+                "season": standings.get("season"),
+                "division_name": matched_div,
+                "teams": matched_teams,
+            }
+    except Exception:
+        pass
+    return None
+
+
 def get_team_live_status(team_id: int) -> dict:
     cache_key = f"team_live:{team_id}"
     cached = _cache.get(cache_key)
@@ -571,13 +602,44 @@ def get_team_live_status(team_id: int) -> dict:
         if g["abstract_state"] == "Final":
             last_final_game = g
         elif g["abstract_state"] == "Preview" and next_game is None and g["game_date"] >= today_str:
-            next_game = g
+            if not today_game or g["game_pk"] != today_game.get("game_pk"):
+                next_game = g
+
+    # Offseason / long-break fallback: look up to 120 days back and 180 days ahead
+    if next_game is None or last_final_game is None:
+        try:
+            wide_data = _get_json(
+                "/schedule",
+                params={
+                    "sportId": 1,
+                    "teamId": team_id,
+                    "startDate": (today - timedelta(days=120)).isoformat(),
+                    "endDate": (today + timedelta(days=180)).isoformat(),
+                    "hydrate": "team",
+                },
+            )
+            wide_games = [
+                _parse_game_summary(g)
+                for d in wide_data.get("dates", [])
+                for g in d.get("games", [])
+            ]
+            for g in wide_games:
+                if last_final_game is None and g["abstract_state"] == "Final":
+                    last_final_game = g
+                elif g["abstract_state"] == "Final":
+                    last_final_game = g
+                if next_game is None and g["abstract_state"] == "Preview" and g["game_date"] >= today_str:
+                    if not today_game or g["game_pk"] != today_game.get("game_pk"):
+                        next_game = g
+        except Exception:
+            pass
 
     result = {
         "team_id": team_id,
         "today_game": today_game,
         "next_game": next_game,
         "last_final_game": last_final_game,
+        "division_standings": _get_team_division_standings(team_id),
     }
     _cache.set(cache_key, result, TTL_LIVE)
     return result

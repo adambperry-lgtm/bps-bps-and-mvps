@@ -67,6 +67,11 @@ def serve_index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def serve_favicon():
+    return FileResponse(str(STATIC_DIR / "favicon.ico"))
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "BP’s BPs and MVPs"}

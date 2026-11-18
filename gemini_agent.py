@@ -120,11 +120,27 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
     )
 
     try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=contents,
+                config=config,
+            )
+        except Exception as first_exc:
+            err_str = str(first_exc)
+            if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version", "404")):
+                v1beta_client = _get_client(api_version="v1beta")
+                if v1beta_client is not None:
+                    response = v1beta_client.models.generate_content(
+                        model=MODEL_NAME,
+                        contents=contents,
+                        config=config,
+                    )
+                else:
+                    raise
+            else:
+                raise
+
         if response.text:
             return response.text.strip()
         return (
@@ -132,8 +148,12 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
             "Let's keep our chat focused on baseball—ask me about your favorite MLB player, team, or hitting tips!"
         )
     except Exception as exc:
+        print(f"[Gemini Error] {type(exc).__name__}: {exc}", flush=True)
+        detail = str(exc).strip().replace("\n", " ")
+        if len(detail) > 160:
+            detail = detail[:157] + "..."
         return (
-            f"Oops, the dugout radio had a little static ({type(exc).__name__}). "
+            f"Oops, the dugout radio had a little static ({type(exc).__name__}: {detail}). "
             "Please check your `GEMINI_API_KEY` or try asking your baseball question again!"
         )
 

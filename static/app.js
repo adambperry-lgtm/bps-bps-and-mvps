@@ -1119,20 +1119,81 @@ async function viewPlayerDetails(playerId) {
     ].filter(Boolean).join(' <span class="text-amber-500">•</span> ');
 
     const logs = p.last_5_games || [];
+    const isPitcherLog = Boolean(
+      logs.length && (logs[0]?.stat?.inningsPitched !== undefined || logs[0]?.stat?.earnedRuns !== undefined)
+    );
     const logsHtml = logs.length
       ? `<div class="pt-3 border-t border-amber-300/70">
-           <h4 class="text-[11px] font-black uppercase tracking-[0.14em] text-navy mb-2">Recent Game Log (Last 5 Games)</h4>
-           <div class="space-y-1.5">
-             ${logs
-               .map(
-                 (g) => `
-               <div class="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm bg-[#f4ebd4]/80 rounded-lg px-3 py-1.5 border border-amber-300/60">
-                 <span class="font-bold text-navy">${escapeHtml(g.date)} • ${escapeHtml(g.matchup)}</span>
-                 <span class="font-mono font-semibold text-slate-800">${escapeHtml(g.summary)}</span>
-               </div>
-             `
-               )
-               .join('')}
+           <h4 class="text-[11px] font-black uppercase tracking-[0.14em] text-ballred mb-2">Recent Game Log (Last 5 Games)</h4>
+           <div class="overflow-x-auto rounded-lg border-2 border-navy shadow-inner">
+             <table class="w-full text-xs font-mono tabular-nums border-collapse">
+               <thead>
+                 <tr class="bg-navy text-gold font-sans text-[11px] font-extrabold uppercase tracking-wider">
+                   <th class="px-2.5 py-1.5 text-left">DATE</th>
+                   <th class="px-2 py-1.5 text-left">OPP</th>
+                   ${
+                     isPitcherLog
+                       ? `<th class="px-2 py-1.5 text-right">IP</th>
+                          <th class="px-2 py-1.5 text-right">H</th>
+                          <th class="px-2 py-1.5 text-right">R</th>
+                          <th class="px-2 py-1.5 text-right">ER</th>
+                          <th class="px-2 py-1.5 text-right">BB</th>
+                          <th class="px-2 py-1.5 text-right">SO</th>
+                          <th class="px-2.5 py-1.5 text-right">HR</th>`
+                       : `<th class="px-2 py-1.5 text-right">AB</th>
+                          <th class="px-2 py-1.5 text-right">R</th>
+                          <th class="px-2 py-1.5 text-right">H</th>
+                          <th class="px-2 py-1.5 text-right">2B</th>
+                          <th class="px-2 py-1.5 text-right">3B</th>
+                          <th class="px-2 py-1.5 text-right">HR</th>
+                          <th class="px-2 py-1.5 text-right">RBI</th>
+                          <th class="px-2 py-1.5 text-right">BB</th>
+                          <th class="px-2 py-1.5 text-right">SB</th>
+                          <th class="px-2.5 py-1.5 text-right">SO</th>`
+                   }
+                 </tr>
+               </thead>
+               <tbody>
+                 ${logs
+                   .map((g, idx) => {
+                     const st = g.stat || {};
+                     const rowBg = idx % 2 === 0 ? 'bg-[#fdf8ec]' : 'bg-[#f8f0dc]';
+                     const hi = (val) => (Number(val) > 0 ? 'font-extrabold text-navy' : 'text-slate-600');
+                     if (isPitcherLog) {
+                       return `
+                         <tr class="${rowBg} text-slate-800 border-t border-amber-200/80">
+                           <td class="px-2.5 py-1.5 font-sans font-bold text-navy whitespace-nowrap">${escapeHtml(g.date)}</td>
+                           <td class="px-2 py-1.5 font-sans font-semibold whitespace-nowrap">${escapeHtml(g.matchup)}</td>
+                           <td class="px-2 py-1.5 text-right">${escapeHtml(st.inningsPitched ?? '0.0')}</td>
+                           <td class="px-2 py-1.5 text-right">${st.hits ?? 0}</td>
+                           <td class="px-2 py-1.5 text-right">${st.runs ?? 0}</td>
+                           <td class="px-2 py-1.5 text-right">${st.earnedRuns ?? 0}</td>
+                           <td class="px-2 py-1.5 text-right">${st.baseOnBalls ?? 0}</td>
+                           <td class="px-2 py-1.5 text-right ${hi(st.strikeOuts)}">${st.strikeOuts ?? 0}</td>
+                           <td class="px-2.5 py-1.5 text-right">${st.homeRuns ?? 0}</td>
+                         </tr>
+                       `;
+                     }
+                     return `
+                       <tr class="${rowBg} text-slate-800 border-t border-amber-200/80">
+                         <td class="px-2.5 py-1.5 font-sans font-bold text-navy whitespace-nowrap">${escapeHtml(g.date)}</td>
+                         <td class="px-2 py-1.5 font-sans font-semibold whitespace-nowrap">${escapeHtml(g.matchup)}</td>
+                         <td class="px-2 py-1.5 text-right">${st.atBats ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.runs)}">${st.runs ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.hits)}">${st.hits ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.doubles)}">${st.doubles ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.triples)}">${st.triples ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.homeRuns)}">${st.homeRuns ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.rbi)}">${st.rbi ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.baseOnBalls)}">${st.baseOnBalls ?? 0}</td>
+                         <td class="px-2 py-1.5 text-right ${hi(st.stolenBases)}">${st.stolenBases ?? 0}</td>
+                         <td class="px-2.5 py-1.5 text-right">${st.strikeOuts ?? 0}</td>
+                       </tr>
+                     `;
+                   })
+                   .join('')}
+               </tbody>
+             </table>
            </div>
          </div>`
       : '';

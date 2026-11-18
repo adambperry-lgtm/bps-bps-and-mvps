@@ -308,20 +308,45 @@ def _format_game_log(splits: list[dict], is_pitcher: bool) -> list[dict]:
         is_home = s.get("isHome", True)
         prefix = "vs" if is_home else "@"
         if is_pitcher and ("inningsPitched" in stat or "earnedRuns" in stat):
-            summary = (
-                f"{stat.get('inningsPitched', '0.0')} IP, "
-                f"{stat.get('hits', 0)} H, "
-                f"{stat.get('earnedRuns', 0)} ER, "
-                f"{stat.get('strikeOuts', 0)} K"
-            )
+            parts = [
+                f"{stat.get('inningsPitched', '0.0')} IP",
+                f"{stat.get('hits', 0)} H",
+                f"{stat.get('earnedRuns', 0)} ER",
+                f"{stat.get('baseOnBalls', 0)} BB",
+                f"{stat.get('strikeOuts', 0)} SO",
+            ]
+            if stat.get("homeRuns"):
+                parts.append(f"{stat.get('homeRuns')} HR")
+            if stat.get("wins"):
+                parts.insert(0, "W")
+            elif stat.get("losses"):
+                parts.insert(0, "L")
+            elif stat.get("saves"):
+                parts.insert(0, "SV")
+            summary = ", ".join(parts)
         else:
+            runs = stat.get("runs", 0)
+            doubles = stat.get("doubles", 0)
+            triples = stat.get("triples", 0)
             hr = stat.get("homeRuns", 0)
             rbi = stat.get("rbi", 0)
+            bb = stat.get("baseOnBalls", 0)
+            sb = stat.get("stolenBases", 0)
             extras = []
+            if runs:
+                extras.append(f"{runs} R")
+            if doubles:
+                extras.append(f"{doubles} 2B")
+            if triples:
+                extras.append(f"{triples} 3B")
             if hr:
                 extras.append(f"{hr} HR")
             if rbi:
                 extras.append(f"{rbi} RBI")
+            if bb:
+                extras.append(f"{bb} BB")
+            if sb:
+                extras.append(f"{sb} SB")
             extra_str = f" ({', '.join(extras)})" if extras else ""
             summary = f"{stat.get('hits', 0)}-for-{stat.get('atBats', 0)}{extra_str}"
         logs.append(

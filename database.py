@@ -105,6 +105,15 @@ def init_db() -> None:
             )
             """
         )
+        # Default favorite team: Philadelphia Phillies
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO favorite_team
+            (id, team_id, team_name, team_abbreviation, team_slug, updated_at)
+            VALUES (1, 143, 'Philadelphia Phillies', 'PHI', 'phillies', ?)
+            """,
+            (_now_iso(),),
+        )
 
 
 # --- Chat Sessions & Memory ---

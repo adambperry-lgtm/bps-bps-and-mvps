@@ -264,9 +264,10 @@ async function loadTeamsDropdown() {
   try {
     const res = await fetch('/api/teams');
     const data = await res.json();
-    const select = document.getElementById('favorite-team-select');
-    const current = select.value;
-    select.innerHTML = '<option value="">— Choose a Favorite Team —</option>';
+    const select = document.getElementById('settings-team-select');
+    if (!select) return;
+    const current = select.value || String(STATE.favoriteTeamId || 143);
+    select.innerHTML = '';
     for (const t of data.teams || []) {
       const opt = document.createElement('option');
       opt.value = t.team_id;
@@ -279,24 +280,62 @@ async function loadTeamsDropdown() {
   }
 }
 
-async function handleFavoriteTeamChange() {
-  const select = document.getElementById('favorite-team-select');
-  const val = select.value;
-  if (!val) {
-    await fetch('/api/favorites/team', { method: 'DELETE' });
-    await loadFavorites();
-    return;
+function openSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  const teamSelect = document.getElementById('settings-team-select');
+  const autoToggle = document.getElementById('auto-refresh-toggle');
+  const settingsAuto = document.getElementById('settings-auto-refresh');
+
+  if (teamSelect && STATE.favoriteTeamId) {
+    teamSelect.value = String(STATE.favoriteTeamId);
   }
+  if (settingsAuto && autoToggle) {
+    settingsAuto.checked = autoToggle.checked;
+  }
+  modal.classList.remove('hidden');
+  document.body.classList.add('overflow-hidden');
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  modal.classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+}
+
+function syncAutoRefreshFromSettings() {
+  const settingsAuto = document.getElementById('settings-auto-refresh');
+  const autoToggle = document.getElementById('auto-refresh-toggle');
+  if (settingsAuto && autoToggle) {
+    autoToggle.checked = settingsAuto.checked;
+    toggleAutoRefresh();
+  }
+}
+
+async function saveSettings() {
+  const teamSelect = document.getElementById('settings-team-select');
+  const teamId = parseInt(teamSelect.value || '143', 10);
   await fetch('/api/favorites/team', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ team_id: parseInt(val, 10) }),
+    body: JSON.stringify({ team_id: teamId }),
   });
-  await loadFavorites();
+  closeSettingsModal();
+  await loadFavorites(true);
+  if (STATE.activeTab === 'news') {
+    await loadNewsfeed();
+  }
+}
+
+async function resetToPhillies() {
+  const teamSelect = document.getElementById('settings-team-select');
+  if (teamSelect) teamSelect.value = '143';
+  await saveSettings();
 }
 
 function toggleAutoRefresh() {
   const checked = document.getElementById('auto-refresh-toggle').checked;
+  const settingsAuto = document.getElementById('settings-auto-refresh');
+  if (settingsAuto) settingsAuto.checked = checked;
   if (STATE.autoRefreshTimer) {
     clearInterval(STATE.autoRefreshTimer);
     STATE.autoRefreshTimer = null;
@@ -321,16 +360,11 @@ async function loadFavorites(showSpinner = false) {
     const favPlayers = data.favorite_players || [];
     STATE.favoritePlayerIds = new Set(favPlayers.map((p) => p.player_id));
 
-    // Sync team dropdown
     const favTeam = data.favorite_team;
-    const select = document.getElementById('favorite-team-select');
-    if (favTeam && select) {
-      select.value = String(favTeam.team_id);
-      document.getElementById('favorite-team-badge').innerHTML =
-        `<span class="font-semibold text-navy">Following:</span> ${escapeHtml(favTeam.team_name)}`;
-    } else if (select) {
-      document.getElementById('favorite-team-badge').textContent =
-        'Pick a team to see today’s live game, next matchup, and last final score!';
+    STATE.favoriteTeamId = favTeam ? favTeam.team_id : 143;
+    const select = document.getElementById('settings-team-select');
+    if (select && STATE.favoriteTeamId) {
+      select.value = String(STATE.favoriteTeamId);
     }
 
     renderTeamLiveCard(favTeam, data.team_live_status);

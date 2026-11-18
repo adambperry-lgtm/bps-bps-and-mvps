@@ -81,24 +81,31 @@
         </div>
       </div>
 
-      <!-- Navigation Tabs -->
-      <nav class="flex items-center gap-1.5 bg-navy-dark/70 p-1 rounded-xl self-start md:self-auto" aria-label="Main navigation">
-        <button id="tab-btn-chat" onclick="switchTab('chat')"
-          class="tab-active px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
-          <span>💬</span>
-          <span>Dugout Chat</span>
+      <!-- Navigation Tabs + Settings -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <nav class="flex items-center gap-1.5 bg-navy-dark/70 p-1 rounded-xl" aria-label="Main navigation">
+          <button id="tab-btn-chat" onclick="switchTab('chat')"
+            class="tab-active px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+            <span>💬</span>
+            <span>Dugout Chat</span>
+          </button>
+          <button id="tab-btn-tracker" onclick="switchTab('tracker')"
+            class="tab-inactive px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+            <span>📊</span>
+            <span>BPs &amp; MVPs Tracker</span>
+          </button>
+          <button id="tab-btn-news" onclick="switchTab('news')"
+            class="tab-inactive px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
+            <span>📰</span>
+            <span>Player Newsfeed</span>
+          </button>
+        </nav>
+        <button onclick="openSettingsModal()" aria-label="Open Settings" title="Settings"
+          class="px-3 py-2 rounded-xl bg-navy-dark/70 hover:bg-navy-light text-slate-200 hover:text-white text-sm font-semibold transition flex items-center gap-1.5 border border-white/10">
+          <span>⚙️</span>
+          <span class="hidden sm:inline">Settings</span>
         </button>
-        <button id="tab-btn-tracker" onclick="switchTab('tracker')"
-          class="tab-inactive px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
-          <span>📊</span>
-          <span>BPs &amp; MVPs Tracker</span>
-        </button>
-        <button id="tab-btn-news" onclick="switchTab('news')"
-          class="tab-inactive px-3.5 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-1.5">
-          <span>📰</span>
-          <span>Player Newsfeed</span>
-        </button>
-      </nav>
+      </div>
     </div>
   </header>
 
@@ -330,6 +337,61 @@
           class="px-4 py-1.5 rounded-lg bg-navy hover:bg-navy-light text-white text-sm font-semibold transition">
           Back to Newsfeed
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" onclick="if (event.target === this) closeSettingsModal()"
+    class="hidden fixed inset-0 z-50 bg-navy-dark/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="bg-navy text-white px-5 py-3.5 flex items-center justify-between border-b-2 border-ballred">
+        <h2 class="font-bold text-lg flex items-center gap-2">
+          <span>⚙️</span>
+          <span>Settings</span>
+        </h2>
+        <button onclick="closeSettingsModal()" aria-label="Close settings"
+          class="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-sm font-bold transition">
+          ✕
+        </button>
+      </div>
+
+      <div class="p-5 space-y-5">
+        <div>
+          <label for="settings-team-select" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+            Favorite MLB Team
+          </label>
+          <select id="settings-team-select"
+            class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium text-navy focus:ring-2 focus:ring-navy">
+          </select>
+          <p class="text-xs text-slate-400 mt-1">Default: Philadelphia Phillies</p>
+        </div>
+
+        <div class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+          <div>
+            <div class="text-sm font-bold text-navy">60s Live Auto-Refresh</div>
+            <div class="text-xs text-slate-500">Automatically refresh live game &amp; MVP stats every minute</div>
+          </div>
+          <input id="settings-auto-refresh" type="checkbox" onchange="syncAutoRefreshFromSettings()"
+            class="w-5 h-5 rounded text-navy focus:ring-navy cursor-pointer" />
+        </div>
+
+        <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+          <button onclick="resetToPhillies()"
+            class="text-xs font-semibold text-ballred hover:underline">
+            Reset to Phillies
+          </button>
+          <div class="flex items-center gap-2">
+            <button onclick="closeSettingsModal()"
+              class="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold transition">
+              Cancel
+            </button>
+            <button onclick="saveSettings()"
+              class="px-4 py-2 rounded-xl bg-navy hover:bg-navy-light text-white text-sm font-semibold transition shadow-sm">
+              Save Settings
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

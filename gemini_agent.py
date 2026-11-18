@@ -7,7 +7,12 @@ from google.genai import types
 
 import mlb_service
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.5-flash-lite"
+MODEL_CANDIDATES = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash-lite",
+]
 
 SAFETY_SETTINGS = [
     types.SafetySetting(
@@ -122,28 +127,36 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
     )
 
     try:
-        try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=contents,
-                config=config,
-            )
-        except Exception as first_exc:
-            err_str = str(first_exc)
-            if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version", "404")):
-                v1beta_client = _get_client(api_version="v1beta")
-                if v1beta_client is not None:
-                    response = v1beta_client.models.generate_content(
-                        model=MODEL_NAME,
-                        contents=contents,
-                        config=config,
-                    )
-                else:
-                    raise
-            else:
+        response = None
+        last_exc = None
+        for model_id in MODEL_CANDIDATES:
+            try:
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=config,
+                )
+                break
+            except Exception as model_exc:
+                last_exc = model_exc
+                err_str = str(model_exc)
+                if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                    continue
+                if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version")):
+                    v1beta_client = _get_client(api_version="v1beta")
+                    if v1beta_client is not None:
+                        response = v1beta_client.models.generate_content(
+                            model=model_id,
+                            contents=contents,
+                            config=config,
+                        )
+                        break
                 raise
 
-        if response.text:
+        if response is None and last_exc is not None:
+            raise last_exc
+
+        if response and response.text:
             return response.text.strip()
         return (
             "Whoa, that pitch was a little outside the strike zone! "

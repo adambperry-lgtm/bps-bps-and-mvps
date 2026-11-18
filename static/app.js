@@ -430,7 +430,39 @@ function cleanTextForSpeech(text) {
     .trim();
 }
 
+function unlockAudioPlayer() {
+  const player = document.getElementById('tts-audio-player');
+  if (!player) return null;
+  try {
+    player.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+    const p = player.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch {
+    // ignore
+  }
+  return player;
+}
+
+function stopAudioPlayer() {
+  const player = document.getElementById('tts-audio-player');
+  if (player) {
+    try {
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+    } catch {
+      // ignore
+    }
+  }
+  if (STATE.currentAudioUrl) {
+    URL.revokeObjectURL(STATE.currentAudioUrl);
+    STATE.currentAudioUrl = null;
+  }
+  STATE.currentAudio = null;
+}
+
 function stopSpeaking() {
+  stopAudioPlayer();
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -442,24 +474,68 @@ function stopSpeaking() {
   }
 }
 
-function speakText(text, btnEl = null) {
-  if (!('speechSynthesis' in window)) return;
-
-  const isSameActiveBtn = btnEl && STATE.activeSpeakBtn === btnEl && window.speechSynthesis.speaking;
+async function speakText(text, btnEl = null) {
+  const player = document.getElementById('tts-audio-player');
+  const isPlaying = Boolean(
+    (player && !player.paused && player.currentTime > 0) ||
+    ('speechSynthesis' in window && window.speechSynthesis.speaking)
+  );
+  const isSameActiveBtn = btnEl && STATE.activeSpeakBtn === btnEl && isPlaying;
   stopSpeaking();
   if (isSameActiveBtn) return;
 
   const cleaned = cleanTextForSpeech(text);
   if (!cleaned) return;
 
+  // Unlock iPad Safari audio synchronously inside tap gesture
+  unlockAudioPlayer();
+
+  if (btnEl) {
+    STATE.activeSpeakBtn = btnEl;
+    btnEl.innerHTML = '<span>⏳</span><span>Loading...</span>';
+    btnEl.classList.remove('text-slate-400');
+    btnEl.classList.add('text-ballred');
+  }
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: cleaned, voice: STATE.ttsVoice || 'Puck' }),
+    });
+    if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    STATE.currentAudioUrl = url;
+    STATE.currentAudio = player;
+
+    player.src = url;
+    player.onended = () => stopSpeaking();
+    player.onerror = () => stopSpeaking();
+
+    if (btnEl && STATE.activeSpeakBtn === btnEl) {
+      btnEl.innerHTML = '<span>⏹️</span><span>Stop</span>';
+    }
+    await player.play();
+    return;
+  } catch (err) {
+    console.warn('Gemini TTS fallback to browser speech:', err);
+  }
+
+  if (!('speechSynthesis' in window)) {
+    stopSpeaking();
+    return;
+  }
+
   const utterance = new SpeechSynthesisUtterance(cleaned);
   utterance.lang = 'en-US';
-  utterance.rate = 1.0;
+  utterance.rate = 0.96;
   utterance.pitch = 1.0;
 
   const voices = window.speechSynthesis.getVoices();
   const preferred =
-    voices.find((v) => v.lang === 'en-US' && /natural|google|samantha|alex|daniel/i.test(v.name)) ||
+    voices.find((v) => v.lang.startsWith('en') && /enhanced|premium|siri|natural/i.test(v.name)) ||
     voices.find((v) => v.lang.startsWith('en-US')) ||
     voices.find((v) => v.lang.startsWith('en'));
   if (preferred) {
@@ -471,17 +547,9 @@ function speakText(text, btnEl = null) {
     btnEl.innerHTML = '<span>⏹️</span><span>Stop</span>';
     btnEl.classList.remove('text-slate-400');
     btnEl.classList.add('text-ballred');
-    utterance.onend = () => {
-      if (STATE.activeSpeakBtn === btnEl) {
-        stopSpeaking();
-      }
-    };
-    utterance.onerror = () => {
-      if (STATE.activeSpeakBtn === btnEl) {
-        stopSpeaking();
-      }
-    };
   }
+  utterance.onend = () => stopSpeaking();
+  utterance.onerror = () => stopSpeaking();
 
   window.speechSynthesis.speak(utterance);
 }
@@ -1166,17 +1234,7 @@ function setReaderTtsButton(state) {
 }
 
 function stopReaderAudio() {
-  if (STATE.currentAudio) {
-    try {
-      STATE.currentAudio.pause();
-      if (STATE.currentAudio._objectUrl) {
-        URL.revokeObjectURL(STATE.currentAudio._objectUrl);
-      }
-    } catch {
-      // ignore
-    }
-    STATE.currentAudio = null;
-  }
+  stopAudioPlayer();
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -1184,7 +1242,13 @@ function stopReaderAudio() {
 }
 
 async function toggleReaderAudio() {
-  if (STATE.currentAudio || ('speechSynthesis' in window && window.speechSynthesis.speaking)) {
+  const player = document.getElementById('tts-audio-player');
+  const isPlaying = Boolean(
+    (player && !player.paused && player.currentTime > 0) ||
+    STATE.currentAudio ||
+    ('speechSynthesis' in window && window.speechSynthesis.speaking)
+  );
+  if (isPlaying) {
     stopReaderAudio();
     return;
   }
@@ -1192,6 +1256,8 @@ async function toggleReaderAudio() {
   const text = (STATE.readerPlainText || '').trim();
   if (!text) return;
 
+  // Unlock iPad Safari audio synchronously inside tap gesture
+  const unlockedPlayer = unlockAudioPlayer();
   setReaderTtsButton('loading');
 
   try {
@@ -1200,20 +1266,21 @@ async function toggleReaderAudio() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice: STATE.ttsVoice || 'Puck' }),
     });
-    if (!res.ok) throw new Error('Gemini TTS unavailable');
+    if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
 
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio._objectUrl = url;
-    STATE.currentAudio = audio;
+    STATE.currentAudioUrl = url;
+    STATE.currentAudio = unlockedPlayer;
 
-    audio.onended = () => stopReaderAudio();
-    audio.onerror = () => stopReaderAudio();
+    unlockedPlayer.src = url;
+    unlockedPlayer.onended = () => stopReaderAudio();
+    unlockedPlayer.onerror = () => stopReaderAudio();
 
-    await audio.play();
+    await unlockedPlayer.play();
     setReaderTtsButton('playing');
-  } catch {
+  } catch (err) {
+    console.warn('Gemini TTS reader fallback to browser speech:', err);
     // Graceful fallback to browser SpeechSynthesis (preferring Enhanced/Siri English voices on iPad)
     if ('speechSynthesis' in window) {
       const utter = new SpeechSynthesisUtterance(text);

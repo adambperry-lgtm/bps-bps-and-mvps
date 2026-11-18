@@ -203,26 +203,9 @@
           </div>
         </div>
 
-        <!-- Favorite Team Selector & Live Scoreboard -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
-          <div class="bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col justify-between gap-3">
-            <div>
-              <label for="favorite-team-select" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                My Favorite MLB Team
-              </label>
-              <select id="favorite-team-select" onchange="handleFavoriteTeamChange()"
-                class="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium text-navy focus:ring-2 focus:ring-navy">
-                <option value="">— Choose a Favorite Team —</option>
-              </select>
-            </div>
-            <div id="favorite-team-badge" class="text-xs text-slate-500">
-              Pick a team to see today's live game, next matchup, and last final score!
-            </div>
-          </div>
-
-          <div id="team-live-card" class="lg:col-span-2 bg-navy text-white rounded-xl p-4 shadow-sm flex flex-col justify-center">
-            <p class="text-sm text-slate-300">Select your favorite MLB team on the left to see live game updates here!</p>
-          </div>
+        <!-- Favorite Team Live Scoreboard -->
+        <div id="team-live-card" class="bg-navy text-white rounded-xl p-4 sm:p-5 shadow-sm flex flex-col justify-center">
+          <p class="text-sm text-slate-300">Loading Philadelphia Phillies live status...</p>
         </div>
 
         <!-- Favorited Players Grid -->

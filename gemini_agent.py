@@ -38,10 +38,12 @@ Follow these rules STRICTLY on every single response:
 """
 
 
-def _get_client() -> Optional[genai.Client]:
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+def _get_client(api_version: Optional[str] = None) -> Optional[genai.Client]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
     if not api_key or api_key == "your_gemini_api_key_here":
         return None
+    if api_version:
+        return genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version=api_version))
     return genai.Client(api_key=api_key)
 
 

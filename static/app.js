@@ -349,15 +349,51 @@ function toggleAutoRefresh() {
   }
 }
 
+function getSavedMvpIds() {
+  try {
+    const raw = localStorage.getItem('bp_my_mvps');
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setSavedMvpIds(ids) {
+  try {
+    localStorage.setItem('bp_my_mvps', JSON.stringify(Array.from(new Set(ids))));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 async function loadFavorites(showSpinner = false) {
   const btn = document.getElementById('refresh-live-btn');
   if (showSpinner && btn) btn.textContent = '⏳ Refreshing...';
 
   try {
-    const res = await fetch('/api/favorites');
-    const data = await res.json();
+    let res = await fetch('/api/favorites', { cache: 'no-store' });
+    let data = await res.json();
 
-    const favPlayers = data.favorite_players || [];
+    let favPlayers = data.favorite_players || [];
+    const localIds = getSavedMvpIds();
+
+    // If server DB was reset (e.g., Railway redeploy without /data volume), restore from localStorage
+    if (favPlayers.length === 0 && localIds.length > 0) {
+      for (const pid of localIds) {
+        await fetch('/api/favorites/players', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player_id: pid }),
+        });
+      }
+      res = await fetch('/api/favorites', { cache: 'no-store' });
+      data = await res.json();
+      favPlayers = data.favorite_players || [];
+    } else if (favPlayers.length > 0) {
+      setSavedMvpIds(favPlayers.map((p) => p.player_id));
+    }
+
     STATE.favoritePlayerIds = new Set(favPlayers.map((p) => p.player_id));
 
     const favTeam = data.favorite_team;
@@ -679,17 +715,25 @@ function statBox(label, value) {
 }
 
 async function addFavoritePlayer(playerId) {
-  await fetch('/api/favorites/players', {
+  const res = await fetch('/api/favorites/players', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ player_id: playerId }),
   });
+  if (res.ok) {
+    const ids = getSavedMvpIds();
+    ids.push(playerId);
+    setSavedMvpIds(ids);
+  }
   await loadFavorites();
   await viewPlayerDetails(playerId);
 }
 
 async function removeFavoritePlayer(playerId) {
-  await fetch(`/api/favorites/players/${playerId}`, { method: 'DELETE' });
+  const res = await fetch(`/api/favorites/players/${playerId}`, { method: 'DELETE' });
+  if (res.ok) {
+    setSavedMvpIds(getSavedMvpIds().filter((id) => id !== playerId));
+  }
   await loadFavorites();
   const card = document.getElementById('player-detail-card');
   if (!card.classList.contains('hidden')) {
@@ -706,7 +750,7 @@ async function loadNewsfeed() {
   list.innerHTML = '<div class="text-sm text-slate-500 py-6 text-center">Fetching MLB news &amp; highlights...</div>';
 
   try {
-    const res = await fetch('/api/newsfeed');
+    const res = await fetch('/api/newsfeed', { cache: 'no-store' });
     const data = await res.json();
     STATE.newsItems = data.items || [];
 

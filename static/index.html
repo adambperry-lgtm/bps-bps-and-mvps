@@ -316,10 +316,17 @@
           </span>
           <span class="text-xs text-slate-300 truncate" id="reader-header-subtitle">Article Reader</span>
         </div>
-        <button onclick="closeArticleReader()" aria-label="Close reader"
-          class="px-3 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-sm font-bold transition shrink-0">
-          ✕ Close
-        </button>
+        <div class="flex items-center gap-2 shrink-0">
+          <button id="reader-tts-btn" onclick="toggleReaderAudio()"
+            class="px-3 py-1 rounded-lg bg-gold hover:bg-yellow-400 text-navy text-xs sm:text-sm font-bold transition flex items-center gap-1">
+            <span>🔊</span>
+            <span>Read Aloud</span>
+          </button>
+          <button onclick="closeArticleReader()" aria-label="Close reader"
+            class="px-3 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-sm font-bold transition shrink-0">
+            ✕ Close
+          </button>
+        </div>
       </div>
 
       <!-- Modal Body -->
@@ -335,7 +342,7 @@
         </a>
         <button onclick="closeArticleReader()"
           class="px-4 py-1.5 rounded-lg bg-navy hover:bg-navy-light text-white text-sm font-semibold transition">
-          Back to Newsfeed
+          Back to Baseball News
         </button>
       </div>
     </div>
@@ -365,6 +372,19 @@
             class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium text-navy focus:ring-2 focus:ring-navy">
           </select>
           <p class="text-xs text-slate-400 mt-1">Default: Philadelphia Phillies</p>
+        </div>
+
+        <div>
+          <label for="settings-voice-select" class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+            Reading Voice (Gemini TTS)
+          </label>
+          <select id="settings-voice-select"
+            class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium text-navy focus:ring-2 focus:ring-navy">
+            <option value="Puck">Puck — Energetic Coach</option>
+            <option value="Kore">Kore — Warm Narrator</option>
+            <option value="Charon">Charon — Play-by-Play Announcer</option>
+            <option value="Zephyr">Zephyr — Friendly Host</option>
+          </select>
         </div>
 
         <div class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-3.5">

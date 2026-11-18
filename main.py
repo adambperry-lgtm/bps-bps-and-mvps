@@ -5,7 +5,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -237,4 +237,20 @@ def get_reader_article(url: str = Query(..., min_length=10)):
         return news_service.fetch_reader_article(url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+    voice: str = "Puck"
+
+
+@app.post("/api/tts")
+def text_to_speech(req: TTSRequest):
+    try:
+        audio_bytes, media_type = gemini_agent.synthesize_speech(req.text, voice_name=req.voice)
+        return Response(content=audio_bytes, media_type=media_type)
+    except Exception as exc:
+        print(f"[Gemini TTS Error] {type(exc).__name__}: {exc}", flush=True)
+        raise HTTPException(status_code=503, detail=f"TTS unavailable: {type(exc).__name__}")
+
 

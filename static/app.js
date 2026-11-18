@@ -9,6 +9,9 @@ const STATE = {
   isListening: false,
   recognition: null,
   activeSpeakBtn: null,
+  ttsVoice: localStorage.getItem('bp_tts_voice') || 'Puck',
+  currentAudio: null,
+  readerPlainText: '',
 };
 
 const WELCOME_MESSAGE =
@@ -508,14 +511,13 @@ async function loadTeamsDropdown() {
 function openSettingsModal() {
   const modal = document.getElementById('settings-modal');
   const teamSelect = document.getElementById('settings-team-select');
-  const autoToggle = document.getElementById('auto-refresh-toggle');
-  const settingsAuto = document.getElementById('settings-auto-refresh');
+  const voiceSelect = document.getElementById('settings-voice-select');
 
   if (teamSelect && STATE.favoriteTeamId) {
     teamSelect.value = String(STATE.favoriteTeamId);
   }
-  if (settingsAuto && autoToggle) {
-    settingsAuto.checked = autoToggle.checked;
+  if (voiceSelect && STATE.ttsVoice) {
+    voiceSelect.value = STATE.ttsVoice;
   }
   modal.classList.remove('hidden');
   document.body.classList.add('overflow-hidden');
@@ -533,7 +535,12 @@ function syncAutoRefreshFromSettings() {
 
 async function saveSettings() {
   const teamSelect = document.getElementById('settings-team-select');
+  const voiceSelect = document.getElementById('settings-voice-select');
   const teamId = parseInt(teamSelect.value || '143', 10);
+  if (voiceSelect && voiceSelect.value) {
+    STATE.ttsVoice = voiceSelect.value;
+    localStorage.setItem('bp_tts_voice', STATE.ttsVoice);
+  }
   await fetch('/api/favorites/team', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1081,6 +1088,9 @@ async function openArticleReader(idx) {
   extLink.href = item.url || '#';
   extLink.textContent = `Open on ${sourceName} ↗`;
 
+  stopReaderAudio();
+  STATE.readerPlainText = `${item.title}. ${item.summary || ''}`;
+
   body.innerHTML = `
     <h2 class="text-xl sm:text-2xl font-extrabold text-navy leading-snug">${escapeHtml(item.title)}</h2>
     <div class="text-sm text-slate-500 py-6 text-center">Loading full story in reader mode...</div>
@@ -1099,18 +1109,22 @@ async function openArticleReader(idx) {
            class="w-full max-h-64 object-cover rounded-xl border border-slate-200" />`
       : '';
 
-    const paragraphsHtml =
-      data.reader_available && data.paragraphs?.length
-        ? data.paragraphs
-            .map((p) => `<p class="text-base sm:text-[17px] leading-relaxed text-slate-700">${escapeHtml(p)}</p>`)
-            .join('')
-        : `<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-             <p class="text-base leading-relaxed text-slate-700">${escapeHtml(item.summary)}</p>
-             <p class="text-xs text-slate-500">
-               Full text preview is limited for this story on ${escapeHtml(sourceName)}. You can still tap
-               <strong>Open on ${escapeHtml(sourceName)} ↗</strong> below if you'd like to view the original page.
-             </p>
-           </div>`;
+    const hasParagraphs = data.reader_available && data.paragraphs?.length;
+    STATE.readerPlainText = hasParagraphs
+      ? `${data.title || item.title}. ${data.paragraphs.join(' ')}`
+      : `${item.title}. ${item.summary || ''}`;
+
+    const paragraphsHtml = hasParagraphs
+      ? data.paragraphs
+          .map((p) => `<p class="text-base sm:text-[17px] leading-relaxed text-slate-700">${escapeHtml(p)}</p>`)
+          .join('')
+      : `<div class="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+           <p class="text-base leading-relaxed text-slate-700">${escapeHtml(item.summary)}</p>
+           <p class="text-xs text-slate-500">
+             Full text preview is limited for this story on ${escapeHtml(sourceName)}. You can still tap
+             <strong>Open on ${escapeHtml(sourceName)} ↗</strong> below if you'd like to view the original page.
+           </p>
+         </div>`;
 
     body.innerHTML = `
       <div class="space-y-4">
@@ -1123,6 +1137,7 @@ async function openArticleReader(idx) {
       </div>
     `;
   } catch {
+    STATE.readerPlainText = `${item.title}. ${item.summary || ''}`;
     body.innerHTML = `
       <div class="space-y-4">
         <h2 class="text-xl sm:text-2xl font-extrabold text-navy leading-snug">${escapeHtml(item.title)}</h2>
@@ -1133,7 +1148,94 @@ async function openArticleReader(idx) {
   }
 }
 
+function setReaderTtsButton(state) {
+  const btn = document.getElementById('reader-tts-btn');
+  if (!btn) return;
+  if (state === 'loading') {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span><span>Loading Voice...</span>';
+  } else if (state === 'playing') {
+    btn.disabled = false;
+    btn.className = 'px-3 py-1 rounded-lg bg-ballred hover:bg-ballred-light text-white text-xs sm:text-sm font-bold transition flex items-center gap-1';
+    btn.innerHTML = '<span>⏹</span><span>Stop</span>';
+  } else {
+    btn.disabled = false;
+    btn.className = 'px-3 py-1 rounded-lg bg-gold hover:bg-yellow-400 text-navy text-xs sm:text-sm font-bold transition flex items-center gap-1';
+    btn.innerHTML = '<span>🔊</span><span>Read Aloud</span>';
+  }
+}
+
+function stopReaderAudio() {
+  if (STATE.currentAudio) {
+    try {
+      STATE.currentAudio.pause();
+      if (STATE.currentAudio._objectUrl) {
+        URL.revokeObjectURL(STATE.currentAudio._objectUrl);
+      }
+    } catch {
+      // ignore
+    }
+    STATE.currentAudio = null;
+  }
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+  setReaderTtsButton('idle');
+}
+
+async function toggleReaderAudio() {
+  if (STATE.currentAudio || ('speechSynthesis' in window && window.speechSynthesis.speaking)) {
+    stopReaderAudio();
+    return;
+  }
+
+  const text = (STATE.readerPlainText || '').trim();
+  if (!text) return;
+
+  setReaderTtsButton('loading');
+
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: STATE.ttsVoice || 'Puck' }),
+    });
+    if (!res.ok) throw new Error('Gemini TTS unavailable');
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio._objectUrl = url;
+    STATE.currentAudio = audio;
+
+    audio.onended = () => stopReaderAudio();
+    audio.onerror = () => stopReaderAudio();
+
+    await audio.play();
+    setReaderTtsButton('playing');
+  } catch {
+    // Graceful fallback to browser SpeechSynthesis (preferring Enhanced/Siri English voices on iPad)
+    if ('speechSynthesis' in window) {
+      const utter = new SpeechSynthesisUtterance(text);
+      const voices = window.speechSynthesis.getVoices() || [];
+      const preferred =
+        voices.find((v) => v.lang.startsWith('en') && /enhanced|premium|siri|natural/i.test(v.name)) ||
+        voices.find((v) => v.lang.startsWith('en-US')) ||
+        voices.find((v) => v.lang.startsWith('en'));
+      if (preferred) utter.voice = preferred;
+      utter.rate = 0.96;
+      utter.onend = () => stopReaderAudio();
+      utter.onerror = () => stopReaderAudio();
+      window.speechSynthesis.speak(utter);
+      setReaderTtsButton('playing');
+    } else {
+      setReaderTtsButton('idle');
+    }
+  }
+}
+
 function closeArticleReader() {
+  stopReaderAudio();
   const modal = document.getElementById('article-reader-modal');
   modal.classList.add('hidden');
   document.body.classList.remove('overflow-hidden');
@@ -1142,6 +1244,7 @@ function closeArticleReader() {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeArticleReader();
+    closeSettingsModal();
   }
 });
 

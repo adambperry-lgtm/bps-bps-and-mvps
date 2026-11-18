@@ -240,3 +240,113 @@ Respond ONLY with valid JSON:
         if len(clean) > 220:
             clean = clean[:217].rsplit(" ", 1)[0] + "..."
         return {"is_safe": True, "summary": clean}
+
+
+# --- Gemini Text-to-Speech (TTS) ---
+
+TTS_MODEL_CANDIDATES = [
+    "gemini-3.8-flash-lite-tts",
+    "gemini-3.8-flash-tts",
+    "gemini-3.1-flash-tts-preview",
+    "gemini-2.5-flash-preview-tts",
+]
+_tts_cache = mlb_service.TTLCache()
+
+
+def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 24000) -> bytes:
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm_bytes)
+    return buf.getvalue()
+
+
+def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
+    """Generate natural-sounding WAV audio for article/chat read-aloud via Gemini TTS."""
+    import hashlib
+
+    clean_text = " ".join((text or "").split())[:2800]
+    if not clean_text:
+        raise ValueError("No text provided for speech synthesis.")
+
+    allowed_voices = {"Puck", "Kore", "Charon", "Zephyr", "Fenrir", "Aoede"}
+    voice = voice_name if voice_name in allowed_voices else "Puck"
+
+    cache_key = f"tts:{voice}:{hashlib.sha256(clean_text.encode('utf-8')).hexdigest()[:20]}"
+    cached = _tts_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    client = _get_client()
+    if client is None:
+        raise RuntimeError("GEMINI_API_KEY is not configured.")
+
+    prompt = (
+        "Read the following baseball story or message in a warm, natural, engaging tone "
+        "suitable for a young baseball fan:\n\n" + clean_text
+    )
+
+    config = types.GenerateContentConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+            )
+        ),
+    )
+
+    response = None
+    last_exc = None
+    for model_id in TTS_MODEL_CANDIDATES:
+        try:
+            response = client.models.generate_content(
+                model=model_id,
+                contents=prompt,
+                config=config,
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+            err_str = str(exc)
+            if "404" in err_str or "NOT_FOUND" in err_str or "no longer available" in err_str:
+                continue
+            if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version")):
+                v1beta_client = _get_client(api_version="v1beta")
+                if v1beta_client is not None:
+                    try:
+                        response = v1beta_client.models.generate_content(
+                            model=model_id,
+                            contents=prompt,
+                            config=config,
+                        )
+                        break
+                    except Exception as inner_exc:
+                        last_exc = inner_exc
+                        if "404" in str(inner_exc) or "NOT_FOUND" in str(inner_exc):
+                            continue
+                        raise
+            raise
+
+    if response is None:
+        raise last_exc or RuntimeError("No Gemini TTS model available.")
+
+    part = response.candidates[0].content.parts[0]
+    inline = part.inline_data
+    audio_bytes = inline.data
+    mime = (inline.mime_type or "audio/pcm").lower()
+
+    if "wav" in mime:
+        result = (audio_bytes, "audio/wav")
+    elif "mpeg" in mime or "mp3" in mime:
+        result = (audio_bytes, "audio/mpeg")
+    else:
+        result = (_pcm_to_wav(audio_bytes, sample_rate=24000), "audio/wav")
+
+    _tts_cache.set(cache_key, result, 1800)
+    return result
+

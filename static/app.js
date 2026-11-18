@@ -802,87 +802,47 @@ function renderFavoritePlayersGrid(players) {
 
   grid.innerHTML = players
     .map((p) => {
-      const h = p.hitting_stats;
-      const ch = p.career_hitting_stats;
-      const pit = p.pitching_stats;
-      const cpit = p.career_pitching_stats;
-      const isSeasonDistinct = p.season_used && p.season_used !== 'Career';
-
-      let statSummary = '<div class="text-xs text-slate-400 mt-2">Stats unavailable</div>';
-      if (p.is_pitcher && (pit || cpit)) {
-        const sRow = isSeasonDistinct && pit ? pit : null;
-        const cRow = cpit || pit;
-        statSummary = `
-          <div class="mt-2.5 rounded-lg overflow-hidden border border-navy/25 bg-[#fdf8ec] text-[11px] font-mono tabular-nums">
-            <div class="grid grid-cols-5 bg-navy text-gold font-sans font-bold uppercase tracking-wider px-2 py-1 text-[10px]">
-              <div>YR</div><div class="text-right">W-L</div><div class="text-right">ERA</div><div class="text-right">WHIP</div><div class="text-right">K</div>
-            </div>
-            ${sRow ? `
-              <div class="grid grid-cols-5 px-2 py-1 text-slate-800 border-b border-amber-200/80">
-                <div class="font-bold text-navy">${escapeHtml(sRow.season || p.season_used)}</div>
-                <div class="text-right">${escapeHtml(sRow.w_l)}</div>
-                <div class="text-right">${escapeHtml(sRow.era)}</div>
-                <div class="text-right">${escapeHtml(sRow.whip)}</div>
-                <div class="text-right">${sRow.strikeouts}</div>
-              </div>
-            ` : ''}
-            ${cRow ? `
-              <div class="grid grid-cols-5 px-2 py-1 bg-[#efe4c8] text-navy font-bold">
-                <div>CAR</div>
-                <div class="text-right">${escapeHtml(cRow.w_l)}</div>
-                <div class="text-right">${escapeHtml(cRow.era)}</div>
-                <div class="text-right">${escapeHtml(cRow.whip)}</div>
-                <div class="text-right">${cRow.strikeouts}</div>
-              </div>
-            ` : ''}
-          </div>
-        `;
-      } else if (h || ch) {
-        const sRow = isSeasonDistinct && h ? h : null;
-        const cRow = ch || h;
-        statSummary = `
-          <div class="mt-2.5 rounded-lg overflow-hidden border border-navy/25 bg-[#fdf8ec] text-[11px] font-mono tabular-nums">
-            <div class="grid grid-cols-5 bg-navy text-gold font-sans font-bold uppercase tracking-wider px-2 py-1 text-[10px]">
-              <div>YR</div><div class="text-right">AVG</div><div class="text-right">HR</div><div class="text-right">RBI</div><div class="text-right">OPS</div>
-            </div>
-            ${sRow ? `
-              <div class="grid grid-cols-5 px-2 py-1 text-slate-800 border-b border-amber-200/80">
-                <div class="font-bold text-navy">${escapeHtml(sRow.season || p.season_used)}</div>
-                <div class="text-right">${escapeHtml(sRow.avg)}</div>
-                <div class="text-right">${sRow.hr}</div>
-                <div class="text-right">${sRow.rbi}</div>
-                <div class="text-right">${escapeHtml(sRow.ops)}</div>
-              </div>
-            ` : ''}
-            ${cRow ? `
-              <div class="grid grid-cols-5 px-2 py-1 bg-[#efe4c8] text-navy font-bold">
-                <div>CAR</div>
-                <div class="text-right">${escapeHtml(cRow.avg)}</div>
-                <div class="text-right">${cRow.hr}</div>
-                <div class="text-right">${cRow.rbi}</div>
-                <div class="text-right">${escapeHtml(cRow.ops)}</div>
-              </div>
-            ` : ''}
-          </div>
-        `;
-      }
+      const jerseyTag = p.jersey_number ? `#${escapeHtml(p.jersey_number)}` : '';
+      const posTag = escapeHtml(p.position || 'MLB');
+      const teamName = escapeHtml(p.team_name || 'MLB');
 
       return `
-        <div class="border border-slate-200 rounded-xl p-4 bg-white shadow-sm flex flex-col justify-between">
-          <div class="flex items-center gap-3">
-            <img src="${escapeHtml(p.headshot_url)}" alt="${escapeHtml(p.full_name)}"
-              class="w-14 h-14 rounded-full object-cover bg-slate-100 border-2 border-gold shrink-0" />
-            <div class="min-w-0 flex-1">
-              <h4 class="font-bold text-navy truncate">${escapeHtml(p.full_name)}</h4>
-              <p class="text-xs text-slate-500 truncate">${escapeHtml(p.position || '')} • ${escapeHtml(p.team_name || 'MLB')}</p>
+        <div onclick="viewPlayerDetails(${p.player_id})"
+          role="button"
+          tabindex="0"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPlayerDetails(${p.player_id});}"
+          class="group bg-[#fdfaf2] p-2 rounded-2xl border-2 border-navy/85 shadow-md hover:shadow-xl hover:-translate-y-0.5 transition cursor-pointer select-none">
+          <div class="relative rounded-xl overflow-hidden border-2 border-ballred bg-gradient-to-b from-[#13294b] via-[#1e3f73] to-[#0c1c36] aspect-[5/7] flex flex-col justify-between">
+            <!-- Top Card Banner -->
+            <div class="relative z-10 flex items-center justify-between gap-1 px-2.5 pt-2">
+              <span class="px-2 py-0.5 rounded-full bg-gold text-navy text-[10px] font-black uppercase tracking-wider shadow-sm">
+                ${posTag}${jerseyTag ? ` • ${jerseyTag}` : ''}
+              </span>
+              <button type="button"
+                onclick="event.stopPropagation(); removeFavoritePlayer(${p.player_id})"
+                title="Remove from My MVPs"
+                aria-label="Remove ${escapeHtml(p.full_name)} from My MVPs"
+                class="w-6 h-6 rounded-full bg-black/45 hover:bg-ballred text-white text-xs font-bold flex items-center justify-center transition">
+                ×
+              </button>
             </div>
-          </div>
-          ${statSummary}
-          <div class="flex items-center justify-between gap-2 mt-3 pt-2 border-t border-slate-100">
-            <button onclick="viewPlayerDetails(${p.player_id})"
-              class="text-xs font-semibold text-navy hover:underline">View Full Card</button>
-            <button onclick="removeFavoritePlayer(${p.player_id})"
-              class="text-xs font-semibold text-ballred hover:underline">Remove</button>
+
+            <!-- Player Portrait -->
+            <div class="relative flex-1 flex items-end justify-center overflow-hidden px-2 pt-1">
+              <div class="absolute inset-x-4 bottom-2 top-3 rounded-full bg-white/10 blur-xl pointer-events-none"></div>
+              <img src="${escapeHtml(p.headshot_url)}" alt="${escapeHtml(p.full_name)}"
+                class="relative z-10 w-full h-full object-contain object-bottom drop-shadow-[0_6px_10px_rgba(0,0,0,0.45)] group-hover:scale-[1.03] transition duration-200" />
+            </div>
+
+            <!-- Classic Bottom Nameplate -->
+            <div class="relative z-10">
+              <div class="h-1 bg-gold w-full"></div>
+              <div class="bg-navy/95 px-2.5 py-2 text-center border-t border-white/10">
+                <h4 class="font-black text-white text-xs sm:text-sm uppercase tracking-wide truncate">${escapeHtml(p.full_name)}</h4>
+                <p class="text-[10px] font-bold text-gold uppercase tracking-wider truncate mt-0.5">${teamName}</p>
+                <p class="text-[9px] text-slate-300/80 uppercase tracking-widest mt-0.5">Tap for Card Back</p>
+              </div>
+            </div>
           </div>
         </div>
       `;

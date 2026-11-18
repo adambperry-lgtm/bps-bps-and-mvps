@@ -1077,12 +1077,15 @@ async function viewPlayerDetails(playerId) {
     const p = data.player;
     const isFav = STATE.favoritePlayerIds.has(p.player_id);
 
-    const hittingTable = buildHittingCardTable(
-      p.year_by_year_hitting,
-      p.hitting_stats,
-      p.career_hitting_stats,
-      p.season_used
-    );
+    const isOhtani = p.player_id === 660271 || p.position === 'TWP' || /ohtani/i.test(p.full_name || '');
+    const hittingTable = (!p.is_pitcher || isOhtani)
+      ? buildHittingCardTable(
+          p.year_by_year_hitting,
+          p.hitting_stats,
+          p.career_hitting_stats,
+          p.season_used
+        )
+      : '';
     const pitchingTable = buildPitchingCardTable(
       p.year_by_year_pitching,
       p.pitching_stats,

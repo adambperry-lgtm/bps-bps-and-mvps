@@ -19,7 +19,7 @@ const STATE = {
 
 const WELCOME_MESSAGE =
   "Hey slugger, welcome to **BP’s BPs and MVPs**. I’m your Dugout Coach. " +
-  "Ask me anything about baseball—MLB players, live scores, team standings, rules, or hitting and pitching tips. " +
+  "Ask me about MLB players, live scores, team standings, rules, or hitting and pitching tips—or tell me to add a player to your My MVPs. " +
   "Step up to the plate whenever you’re ready! ⚾";
 
 // --- Utilities ---
@@ -357,6 +357,27 @@ async function handleChatSubmit(event) {
   await sendChatMessage(msg);
 }
 
+function appendMvpAddedNotice(addedPlayers) {
+  if (!Array.isArray(addedPlayers) || !addedPlayers.length) return;
+  const container = document.getElementById('chat-messages');
+  if (!container) return;
+
+  const names = addedPlayers.map((p) => p.full_name).filter(Boolean).join(', ');
+  const wrapper = document.createElement('div');
+  wrapper.className = 'flex justify-start';
+  wrapper.innerHTML = `
+    <div class="inline-flex flex-wrap items-center gap-2 bg-gold-light border border-gold/70 text-navy rounded-xl px-3 py-1.5 text-xs font-semibold shadow-sm">
+      <span>⭐ Added to My MVPs: <strong>${escapeHtml(names)}</strong></span>
+      <button type="button" onclick="switchTab('tracker')"
+        class="px-2 py-0.5 rounded-lg bg-navy hover:bg-navy-light text-white text-[11px] font-bold transition">
+        View My MVPs →
+      </button>
+    </div>
+  `;
+  container.appendChild(wrapper);
+  container.scrollTop = container.scrollHeight;
+}
+
 async function sendChatMessage(msg) {
   const btn = document.getElementById('chat-send-btn');
   const input = document.getElementById('chat-input');
@@ -386,6 +407,20 @@ async function sendChatMessage(msg) {
     }
     const reply = data.reply || 'Let’s talk baseball!';
     appendMessageBubble('assistant', reply);
+
+    if (Array.isArray(data.added_mvps) && data.added_mvps.length > 0) {
+      const ids = getSavedMvpIds();
+      for (const p of data.added_mvps) {
+        if (p && p.player_id) {
+          ids.push(p.player_id);
+          STATE.favoritePlayerIds.add(p.player_id);
+        }
+      }
+      setSavedMvpIds(ids);
+      appendMvpAddedNotice(data.added_mvps);
+      loadFavorites();
+    }
+
     upsertRecentChat(STATE.sessionId, {
       appendMessages: [
         { role: 'user', content: msg },

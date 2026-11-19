@@ -109,15 +109,21 @@ def send_chat_message(req: ChatRequest):
         snippet = req.message.strip()[:45]
         database.update_session_title(session_id, snippet or "Dugout Chat")
 
+    before_mvp_ids = {p["player_id"] for p in database.get_favorite_players()}
+
     user_msg = database.add_message(session_id, "user", req.message.strip())
     reply_text = gemini_agent.chat_with_dugout_coach(history, req.message.strip())
     assistant_msg = database.add_message(session_id, "assistant", reply_text)
+
+    after_mvps = database.get_favorite_players()
+    added_mvps = [p for p in after_mvps if p["player_id"] not in before_mvp_ids]
 
     return {
         "session_id": session_id,
         "user_message": user_msg,
         "assistant_message": assistant_msg,
         "reply": reply_text,
+        "added_mvps": added_mvps,
     }
 
 

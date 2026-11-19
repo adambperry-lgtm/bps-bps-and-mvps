@@ -1,10 +1,13 @@
 import json
 import os
+import re
+import unicodedata
 from typing import Optional
 
 from google import genai
 from google.genai import types
 
+import database
 import mlb_service
 
 MODEL_NAME = "gemini-3.5-flash-lite"
@@ -40,7 +43,8 @@ Follow these rules STRICTLY on every single response:
 2. **Easygoing Follow-Up Questions:** Let your answers stand on their own without feeling like you have to end every single reply with a follow-up question. It's totally fine to add a brief, natural follow-up question now and then when it fits the conversation, but keep it light and never stack multiple questions at the end of a response.
 3. **Strict Topic Lock (Baseball Only):** You may ONLY discuss baseball (MLB history, rules, strategy, stats, players, teams, hitting/fielding/pitching tips, youth baseball, ballparks, etc.). If the user asks about ANYTHING unrelated to baseball (such as video games, school homework, movies, politics, coding, general chat, or other non-baseball topics), politely decline with a warm coach-like message and steer the conversation back to baseball.
 4. **Live Data Grounding:** When asked about MLB player stats, team standings, today's games/scores, or recent player news/transactions, ALWAYS use your MLB lookup tools first rather than guessing. If a tool returns no games today (for example, during the offseason or an off-day), explain that clearly and warmly.
-5. **No Gambling or Adult Themes:** Never discuss sports betting, odds, fantasy gambling, or inappropriate off-field incidents.
+5. **My MVPs Management:** If the user asks to add or follow a player in their My MVPs list (for example, "add Bryce Harper to my MVPs" or "follow Shohei Ohtani"), ALWAYS call `add_player_to_my_mvps` rather than pretending you added them. If the tool reports multiple matching players, briefly list the top candidates and ask which one they meant. If they ask who is currently in their My MVPs, call `list_my_mvps`.
+6. **No Gambling or Adult Themes:** Never discuss sports betting, odds, fantasy gambling, or inappropriate off-field incidents.
 """
 
 
@@ -55,12 +59,75 @@ def _get_client(api_version: Optional[str] = None) -> Optional[genai.Client]:
 
 # --- MLB Function-Calling Tools for Gemini ---
 
+_NAME_SUFFIX_RE = re.compile(r"\b(jr|sr|ii|iii|iv)\b$")
+
+
+def _normalize_name(name: str, strip_suffix: bool = False) -> str:
+    decomposed = unicodedata.normalize("NFKD", name or "")
+    ascii_only = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", ascii_only.lower())
+    cleaned = " ".join(cleaned.split())
+    if strip_suffix:
+        cleaned = _NAME_SUFFIX_RE.sub("", cleaned).strip()
+    return cleaned
+
+
+def _resolve_player_match(
+    matches: list[dict], player_name: str, team_name: str = ""
+) -> tuple[Optional[dict], list[dict]]:
+    """Return (selected_player, ambiguous_candidates) from MLB search matches."""
+    if not matches:
+        return None, []
+
+    pool = matches
+    team_filter = _normalize_name(team_name)
+    if team_filter:
+        filtered = [
+            m
+            for m in pool
+            if team_filter in _normalize_name(m.get("team_name") or "")
+            or team_filter in _normalize_name(m.get("team_slug") or "")
+        ]
+        if filtered:
+            pool = filtered
+
+    q_exact = _normalize_name(player_name)
+    q_base = _normalize_name(player_name, strip_suffix=True)
+
+    exact = [
+        m
+        for m in pool
+        if _normalize_name(m.get("full_name") or "") == q_exact
+        or (q_base and _normalize_name(m.get("full_name") or "", strip_suffix=True) == q_base)
+    ]
+    if len(exact) == 1:
+        return exact[0], []
+    if len(exact) > 1:
+        active_exact = [m for m in exact if m.get("active")]
+        if len(active_exact) == 1:
+            return active_exact[0], []
+        if len(active_exact) > 1:
+            return None, active_exact[:5]
+        return None, exact[:5]
+
+    active_pool = [m for m in pool if m.get("active")]
+    if len(active_pool) == 1:
+        return active_pool[0], []
+    if len(active_pool) > 1:
+        return None, active_pool[:5]
+
+    if len(pool) == 1:
+        return pool[0], []
+    return None, pool[:5]
+
+
 def lookup_mlb_player_stats(player_name: str) -> dict:
     """Look up an MLB player's current team, position, season hitting/pitching stats, and last 5 games."""
     matches = mlb_service.search_players(player_name)
     if not matches:
         return {"found": False, "message": f"No MLB player found matching '{player_name}'."}
-    top = matches[0]
+    selected, _ = _resolve_player_match(matches, player_name)
+    top = selected or matches[0]
     details = mlb_service.get_player_details(top["player_id"])
     return {"found": True, "player": details}
 
@@ -81,7 +148,8 @@ def lookup_player_news_and_transactions(player_name: str) -> dict:
     matches = mlb_service.search_players(player_name)
     if not matches:
         return {"found": False, "message": f"No MLB player found matching '{player_name}'."}
-    top = matches[0]
+    selected, _ = _resolve_player_match(matches, player_name)
+    top = selected or matches[0]
     pid = top["player_id"]
     txs = mlb_service.get_player_transactions(pid, limit=5)
     details = mlb_service.get_player_details(pid)
@@ -94,11 +162,111 @@ def lookup_player_news_and_transactions(player_name: str) -> dict:
     }
 
 
+def add_player_to_my_mvps(player_name: str, team_name: str = "") -> dict:
+    """Add an MLB player (active or historical) to the user's My MVPs (followed players) list.
+
+    Pass optional team_name (e.g., 'Dodgers', 'Phillies') if needed to disambiguate players with the same name.
+    """
+    matches = mlb_service.search_players(player_name)
+    if not matches:
+        return {
+            "added": False,
+            "found": False,
+            "message": f"No MLB player found matching '{player_name}'.",
+        }
+
+    selected, candidates = _resolve_player_match(matches, player_name, team_name=team_name)
+    if selected is None:
+        return {
+            "added": False,
+            "found": True,
+            "ambiguous": True,
+            "message": f"Multiple MLB players match '{player_name}'. Ask the user which one they mean.",
+            "candidates": [
+                {
+                    "player_id": c.get("player_id"),
+                    "full_name": c.get("full_name"),
+                    "team_name": c.get("team_name"),
+                    "position": c.get("position"),
+                    "active": c.get("active"),
+                }
+                for c in candidates
+            ],
+        }
+
+    pid = selected["player_id"]
+    existing = database.get_favorite_players()
+    already = next((p for p in existing if p["player_id"] == pid), None)
+    if already:
+        return {
+            "added": False,
+            "already_in_mvps": True,
+            "player": {
+                "player_id": already["player_id"],
+                "full_name": already["full_name"],
+                "team_name": already.get("team_name"),
+                "position": already.get("position"),
+            },
+            "message": f"{already['full_name']} is already in My MVPs.",
+        }
+
+    try:
+        details = mlb_service.get_player_details(pid)
+        saved = database.add_favorite_player(
+            player_id=details["player_id"],
+            full_name=details["full_name"],
+            team_id=details.get("team_id"),
+            team_name=details.get("team_name"),
+            team_slug=details.get("team_slug"),
+            position=details.get("position"),
+        )
+    except Exception:
+        saved = database.add_favorite_player(
+            player_id=pid,
+            full_name=selected.get("full_name") or player_name,
+            team_id=selected.get("team_id"),
+            team_name=selected.get("team_name"),
+            team_slug=selected.get("team_slug"),
+            position=selected.get("position"),
+        )
+
+    return {
+        "added": True,
+        "already_in_mvps": False,
+        "player": {
+            "player_id": saved["player_id"],
+            "full_name": saved["full_name"],
+            "team_name": saved.get("team_name"),
+            "position": saved.get("position"),
+        },
+        "message": f"Added {saved['full_name']} to My MVPs.",
+    }
+
+
+def list_my_mvps() -> dict:
+    """List the MLB players currently in the user's My MVPs (followed players) list."""
+    mvps = database.get_favorite_players()
+    return {
+        "count": len(mvps),
+        "players": [
+            {
+                "player_id": p["player_id"],
+                "full_name": p["full_name"],
+                "team_name": p.get("team_name"),
+                "position": p.get("position"),
+            }
+            for p in mvps
+        ],
+    }
+
+
 MLB_TOOLS = [
     lookup_mlb_player_stats,
     lookup_mlb_standings,
     lookup_todays_mlb_scoreboard,
     lookup_player_news_and_transactions,
+    add_player_to_my_mvps,
+    list_my_mvps,
 ]
 
 

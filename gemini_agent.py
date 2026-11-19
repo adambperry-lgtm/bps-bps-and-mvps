@@ -13,8 +13,9 @@ import mlb_service
 MODEL_NAME = "gemini-3.5-flash-lite"
 MODEL_CANDIDATES = [
     "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
     "gemini-3.8-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",
 ]
 
 SAFETY_SETTINGS = [
@@ -316,6 +317,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
             )
 
         response = None
+        first_exc = None
         last_exc = None
         for model_id in MODEL_CANDIDATES:
             try:
@@ -326,9 +328,15 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
                 )
                 break
             except Exception as model_exc:
+                if first_exc is None:
+                    first_exc = model_exc
                 last_exc = model_exc
                 err_str = str(model_exc)
                 if _should_try_next_model(model_exc):
+                    print(
+                        f"[Gemini Fallback] {model_id} failed ({type(model_exc).__name__}): {model_exc}",
+                        flush=True,
+                    )
                     time.sleep(0.4)
                     continue
                 if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version")):
@@ -342,15 +350,21 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
                             )
                             break
                         except Exception as inner_exc:
+                            if first_exc is None:
+                                first_exc = inner_exc
                             last_exc = inner_exc
                             if _should_try_next_model(inner_exc):
+                                print(
+                                    f"[Gemini Fallback] {model_id} (v1beta) failed ({type(inner_exc).__name__}): {inner_exc}",
+                                    flush=True,
+                                )
                                 time.sleep(0.4)
                                 continue
                             raise
                 raise
 
-        if response is None and last_exc is not None:
-            raise last_exc
+        if response is None and (first_exc is not None or last_exc is not None):
+            raise first_exc or last_exc
 
         if response and response.text:
             return response.text.strip()

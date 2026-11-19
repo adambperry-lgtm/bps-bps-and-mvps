@@ -53,7 +53,7 @@ def _get_client(api_version: Optional[str] = None) -> Optional[genai.Client]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
     if not api_key or api_key == "your_gemini_api_key_here":
         return None
-    http_kwargs: dict = {"timeout": 12_000}
+    http_kwargs: dict = {"timeout": 20_000}
     if hasattr(types, "HttpRetryOptions"):
         http_kwargs["retry_options"] = types.HttpRetryOptions(attempts=1)
     if api_version:
@@ -292,18 +292,20 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
 
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_message)]))
 
-    config_kwargs: dict = {
-        "system_instruction": SYSTEM_INSTRUCTION,
-        "safety_settings": SAFETY_SETTINGS,
-        "tools": MLB_TOOLS,
-        "temperature": 0.7,
-    }
-    if hasattr(types, "ThinkingConfig"):
-        try:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
-        except TypeError:
-            pass
-    config = types.GenerateContentConfig(**config_kwargs)
+    def _build_config(model_id: str) -> types.GenerateContentConfig:
+        config_kwargs: dict = {
+            "system_instruction": SYSTEM_INSTRUCTION,
+            "safety_settings": SAFETY_SETTINGS,
+            "tools": MLB_TOOLS,
+            "temperature": 0.7,
+        }
+        if hasattr(types, "ThinkingConfig"):
+            level = "minimal" if "flash-lite" in model_id else "low"
+            try:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=level)
+            except TypeError:
+                pass
+        return types.GenerateContentConfig(**config_kwargs)
 
     try:
         import time
@@ -317,6 +319,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
                     "NOT_FOUND",
                     "no longer available",
                     "503",
+                    "504",
                     "UNAVAILABLE",
                     "high demand",
                     "overloaded",
@@ -331,10 +334,11 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
         response = None
         first_exc = None
         last_exc = None
-        deadline = time.monotonic() + 40.0
+        deadline = time.monotonic() + 50.0
         for model_id in MODEL_CANDIDATES:
             if time.monotonic() > deadline:
                 break
+            config = _build_config(model_id)
             try:
                 response = client.models.generate_content(
                     model=model_id,

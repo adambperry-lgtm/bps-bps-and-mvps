@@ -18,9 +18,9 @@ const STATE = {
 };
 
 const WELCOME_MESSAGE =
-  "Hey slugger! Welcome to **BP’s BPs and MVPs**! I’m your Dugout Coach. " +
+  "Hey slugger, welcome to **BP’s BPs and MVPs**. I’m your Dugout Coach. " +
   "Ask me anything about baseball—MLB players, live scores, team standings, rules, or hitting and pitching tips. " +
-  "Step up to the plate and fire away! ⚾";
+  "Step up to the plate whenever you’re ready! ⚾";
 
 // --- Utilities ---
 

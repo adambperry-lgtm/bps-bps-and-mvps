@@ -422,12 +422,19 @@ async function sendChatMessage(msg) {
   appendMessageBubble('user', msg);
   showTypingIndicator();
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: STATE.sessionId, message: msg }),
+      signal: controller.signal,
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     removeTypingIndicator();
 
@@ -463,8 +470,12 @@ async function sendChatMessage(msg) {
     await refreshSessionDropdown();
   } catch (err) {
     removeTypingIndicator();
-    appendMessageBubble('assistant', 'Oops! Could not reach the dugout server. Please try again!');
+    const errMsg = err && err.name === 'AbortError'
+      ? 'Oops! The dugout coach took too long to respond. Please try again!'
+      : 'Oops! Could not reach the dugout server. Please try again!';
+    appendMessageBubble('assistant', errMsg);
   } finally {
+    clearTimeout(timeoutId);
     btn.disabled = false;
     input.disabled = false;
     if (micBtn && STATE.recognition) micBtn.disabled = false;

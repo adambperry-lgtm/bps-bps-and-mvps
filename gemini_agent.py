@@ -53,9 +53,12 @@ def _get_client(api_version: Optional[str] = None) -> Optional[genai.Client]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
     if not api_key or api_key == "your_gemini_api_key_here":
         return None
+    http_kwargs: dict = {"timeout": 20_000}
+    if hasattr(types, "HttpRetryOptions"):
+        http_kwargs["retry_options"] = types.HttpRetryOptions(attempts=2)
     if api_version:
-        return genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version=api_version))
-    return genai.Client(api_key=api_key)
+        http_kwargs["api_version"] = api_version
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(**http_kwargs))
 
 
 # --- MLB Function-Calling Tools for Gemini ---
@@ -300,7 +303,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
         import time
 
         def _should_try_next_model(exc: Exception) -> bool:
-            s = str(exc)
+            s = f"{type(exc).__name__} {exc}"
             return any(
                 k in s
                 for k in (
@@ -313,13 +316,19 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
                     "overloaded",
                     "429",
                     "RESOURCE_EXHAUSTED",
+                    "Timeout",
+                    "timeout",
+                    "DEADLINE_EXCEEDED",
                 )
             )
 
         response = None
         first_exc = None
         last_exc = None
+        deadline = time.monotonic() + 35.0
         for model_id in MODEL_CANDIDATES:
+            if time.monotonic() > deadline:
+                break
             try:
                 response = client.models.generate_content(
                     model=model_id,
@@ -337,7 +346,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
                         f"[Gemini Fallback] {model_id} failed ({type(model_exc).__name__}): {model_exc}",
                         flush=True,
                     )
-                    time.sleep(0.4)
+                    time.sleep(0.2)
                     continue
                 if any(hint in err_str for hint in ("Unknown name", "v1", "not found for API version")):
                     v1beta_client = _get_client(api_version="v1beta")
@@ -358,7 +367,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
                                     f"[Gemini Fallback] {model_id} (v1beta) failed ({type(inner_exc).__name__}): {inner_exc}",
                                     flush=True,
                                 )
-                                time.sleep(0.4)
+                                time.sleep(0.2)
                                 continue
                             raise
                 raise

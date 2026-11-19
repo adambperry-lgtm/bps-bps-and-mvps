@@ -53,9 +53,9 @@ def _get_client(api_version: Optional[str] = None) -> Optional[genai.Client]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
     if not api_key or api_key == "your_gemini_api_key_here":
         return None
-    http_kwargs: dict = {"timeout": 20_000}
+    http_kwargs: dict = {"timeout": 12_000}
     if hasattr(types, "HttpRetryOptions"):
-        http_kwargs["retry_options"] = types.HttpRetryOptions(attempts=2)
+        http_kwargs["retry_options"] = types.HttpRetryOptions(attempts=1)
     if api_version:
         http_kwargs["api_version"] = api_version
     return genai.Client(api_key=api_key, http_options=types.HttpOptions(**http_kwargs))
@@ -292,12 +292,18 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
 
     contents.append(types.Content(role="user", parts=[types.Part.from_text(text=user_message)]))
 
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION,
-        safety_settings=SAFETY_SETTINGS,
-        tools=MLB_TOOLS,
-        temperature=0.7,
-    )
+    config_kwargs: dict = {
+        "system_instruction": SYSTEM_INSTRUCTION,
+        "safety_settings": SAFETY_SETTINGS,
+        "tools": MLB_TOOLS,
+        "temperature": 0.7,
+    }
+    if hasattr(types, "ThinkingConfig"):
+        try:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
+        except TypeError:
+            pass
+    config = types.GenerateContentConfig(**config_kwargs)
 
     try:
         import time
@@ -325,7 +331,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
         response = None
         first_exc = None
         last_exc = None
-        deadline = time.monotonic() + 35.0
+        deadline = time.monotonic() + 40.0
         for model_id in MODEL_CANDIDATES:
             if time.monotonic() > deadline:
                 break

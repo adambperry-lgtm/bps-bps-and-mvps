@@ -1,3 +1,4 @@
+import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -74,7 +75,9 @@ def serve_favicon():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "app": "BP’s BPs and MVPs"}
+    db_path = database._resolve_db_path()
+    is_persistent = db_path.startswith("/data/") or bool(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()) or bool(os.getenv("DATABASE_URL", "").strip())
+    return {"status": "ok", "app": "BP’s BPs and MVPs", "persistent_storage": is_persistent}
 
 
 # --- Feature 1: Dugout Chat ---
@@ -89,6 +92,31 @@ def create_chat_session():
     session_id = str(uuid.uuid4())
     session = database.create_session(session_id, title="New Dugout Chat")
     return {"session": session}
+
+
+class RestoreSessionItem(BaseModel):
+    id: str
+    title: Optional[str] = "Dugout Chat"
+    updated_at: Optional[str] = None
+    messages: list[dict] = Field(default_factory=list)
+
+
+class RestoreSessionsRequest(BaseModel):
+    sessions: list[RestoreSessionItem] = Field(default_factory=list)
+
+
+@app.post("/api/chat/sessions/restore")
+def restore_chat_sessions(req: RestoreSessionsRequest):
+    restored = 0
+    for item in req.sessions[:10]:
+        if database.restore_session(
+            session_id=item.id,
+            title=item.title or "Dugout Chat",
+            messages=item.messages,
+            updated_at=item.updated_at,
+        ):
+            restored += 1
+    return {"restored": restored, "sessions": database.list_sessions()}
 
 
 @app.get("/api/chat/sessions/{session_id}/messages")

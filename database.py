@@ -7,13 +7,21 @@ from typing import Optional
 
 
 def _resolve_db_path() -> str:
-    raw = os.getenv("DATABASE_URL", "./bps_and_mvps.db").strip()
+    raw = os.getenv("DATABASE_URL", "").strip()
     if raw.startswith("sqlite:///"):
         raw = raw[len("sqlite:///"):]
     elif raw.startswith("sqlite://"):
         raw = raw[len("sqlite://"):]
+
     if not raw:
-        raw = "./bps_and_mvps.db"
+        volume_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+        if volume_mount and os.path.isdir(volume_mount) and os.access(volume_mount, os.W_OK):
+            raw = str(Path(volume_mount) / "bps_and_mvps.db")
+        elif os.path.isdir("/data") and os.access("/data", os.W_OK):
+            raw = "/data/bps_and_mvps.db"
+        else:
+            raw = "./bps_and_mvps.db"
+
     db_path = Path(raw)
     if db_path.parent and str(db_path.parent) not in ("", "."):
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +146,7 @@ def list_sessions() -> list[dict]:
             SELECT s.id, s.title, s.created_at, s.updated_at,
                    (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id = s.id) AS message_count
             FROM chat_sessions s
+            WHERE EXISTS (SELECT 1 FROM chat_messages m WHERE m.session_id = s.id)
             ORDER BY s.updated_at DESC
             LIMIT 10
             """
@@ -192,6 +201,50 @@ def get_session_messages(session_id: str, limit: int = 20) -> list[dict]:
             (session_id, limit),
         ).fetchall()
     return [dict(r) for r in reversed(rows)]
+
+
+def restore_session(
+    session_id: str,
+    title: str,
+    messages: list[dict],
+    updated_at: Optional[str] = None,
+) -> bool:
+    """Restore a chat session and its messages into the server DB if it has no messages yet."""
+    clean_msgs = [
+        m for m in (messages or [])
+        if isinstance(m, dict) and (m.get("content") or "").strip()
+    ]
+    if not session_id or not clean_msgs:
+        return False
+
+    now = updated_at or _now_iso()
+    with get_conn() as conn:
+        existing_count = conn.execute(
+            "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+        if existing_count > 0:
+            return False
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO chat_sessions (id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (session_id, (title or "Dugout Chat")[:60], now, now),
+        )
+        for m in clean_msgs:
+            role = "assistant" if m.get("role") == "assistant" else "user"
+            content = str(m.get("content") or "").strip()
+            ts = str(m.get("timestamp") or now)
+            conn.execute(
+                """
+                INSERT INTO chat_messages (session_id, role, content, timestamp)
+                VALUES (?, ?, ?, ?)
+                """,
+                (session_id, role, content, ts),
+            )
+    return True
 
 
 # --- Favorites (Players & Team) ---

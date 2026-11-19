@@ -167,6 +167,36 @@ async function refreshSessionDropdown() {
 
   // Merge server sessions with localStorage recent chats (keeps last 10 even across redeploys)
   const localChats = getRecentChats();
+  const serverIds = new Set(serverSessions.map((s) => s && s.id).filter(Boolean));
+  const missingLocalChats = localChats.filter(
+    (lc) => lc && lc.id && !serverIds.has(lc.id) && Array.isArray(lc.messages) && lc.messages.length > 0
+  );
+
+  if (missingLocalChats.length > 0) {
+    try {
+      const restoreRes = await fetch('/api/chat/sessions/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessions: missingLocalChats.map((lc) => ({
+            id: lc.id,
+            title: lc.title || 'Dugout Chat',
+            updated_at: lc.updatedAt || null,
+            messages: lc.messages,
+          })),
+        }),
+      });
+      if (restoreRes.ok) {
+        const restoreData = await restoreRes.json();
+        if (Array.isArray(restoreData.sessions)) {
+          serverSessions = restoreData.sessions;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to restore cached sessions to server', err);
+    }
+  }
+
   const byId = new Map();
 
   for (const lc of localChats) {

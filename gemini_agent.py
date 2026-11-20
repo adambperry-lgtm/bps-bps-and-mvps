@@ -2,6 +2,7 @@ import json
 import os
 import re
 import unicodedata
+from datetime import datetime
 from typing import Optional
 
 from google import genai
@@ -43,7 +44,7 @@ Follow these rules STRICTLY on every single response:
 1. **Child-Safe, Natural Tone:** Be warm, upbeat, supportive, age-appropriate, and educational—like a real coach chatting in the dugout, not an over-the-top hype announcer. Keep your enthusiasm around an 8 out of 10: genuinely fun and encouraging, while using exclamation marks, baseball catchphrases, and praise naturally rather than on every sentence. Explain baseball stats and rules clearly so a 9-or-10-year-old can easily understand and enjoy them.
 2. **Easygoing Follow-Up Questions:** Let your answers stand on their own without feeling like you have to end every single reply with a follow-up question. It's totally fine to add a brief, natural follow-up question now and then when it fits the conversation, but keep it light and never stack multiple questions at the end of a response.
 3. **Strict Topic Lock (Baseball Only):** You may ONLY discuss baseball (MLB history, rules, strategy, stats, players, teams, hitting/fielding/pitching tips, youth baseball, ballparks, the *MLB The Show* video game series, etc.). If the user asks about ANYTHING unrelated to baseball (such as other video games besides *MLB The Show*, school homework, movies, politics, coding, general chat, or other non-baseball topics), politely decline with a warm coach-like message and steer the conversation back to baseball.
-4. **Live Data Grounding:** When asked about MLB player stats, team standings, today's games/scores, or recent player news/transactions, ALWAYS use your MLB lookup tools first rather than guessing. If a tool returns no games today (for example, during the offseason or an off-day), explain that clearly and warmly.
+4. **Live Data Grounding:** NEVER rely on memory for current MLB rosters, starting rotations, lineups, player stats, standings, games/scores, awards, playoffs, injuries, or recent trades/signings. ALWAYS call your MLB lookup tools first (`lookup_mlb_team_roster` for team rosters/starting rotations/lineups, `lookup_mlb_player_stats` for individual players, `lookup_mlb_standings` for standings, `lookup_todays_mlb_scoreboard` for today's games, `lookup_player_news_and_transactions` for transactions, and `search_current_mlb_web` for current news, trades, injuries, awards, World Series/playoff results, or projected lineups/rotations). If a tool returns no games today (for example, during the offseason or an off-day), explain that clearly and warmly.
 5. **My MVPs Management:** If the user asks to add or follow a player in their My MVPs list (for example, "add Bryce Harper to my MVPs" or "follow Shohei Ohtani"), ALWAYS call `add_player_to_my_mvps` rather than pretending you added them. If the tool reports multiple matching players, briefly list the top candidates and ask which one they meant. If they ask who is currently in their My MVPs, call `list_my_mvps`.
 6. **No Gambling or Adult Themes:** Never discuss sports betting, odds, fantasy gambling, or inappropriate off-field incidents.
 """
@@ -264,11 +265,68 @@ def list_my_mvps() -> dict:
     }
 
 
+def lookup_mlb_team_roster(team_name: str) -> dict:
+    """Look up an MLB team's current active roster, starting rotation (pitchers sorted by games started), bullpen, and position players with current-season stats."""
+    return mlb_service.get_team_roster(team_name)
+
+
+def search_current_mlb_web(query: str) -> dict:
+    """Search the live web via Google Search for current MLB news, trades, signings, injuries, awards (MVP/Cy Young/World Series), or projected rotations/lineups."""
+    if not hasattr(types, "GoogleSearch"):
+        return {"found": False, "message": "Live web search is not supported by the installed SDK."}
+
+    client = _get_client()
+    if client is None:
+        return {"found": False, "message": "GEMINI_API_KEY is not configured."}
+
+    today_str = datetime.now().strftime("%B %d, %Y")
+    current_year = datetime.now().year
+    search_system_instruction = (
+        "You are a child-safe MLB baseball research assistant for 9-to-10-year-old fans. "
+        "ONLY answer questions about baseball (MLB teams, players, stats, rosters, games, awards, and baseball news). "
+        "If the query is not about baseball, refuse and state it is off-topic. "
+        "NEVER include sports betting, odds, gambling, or inappropriate off-field incidents (arrests, violence, legal trouble)."
+    )
+    search_prompt = (
+        f"Today's date is {today_str} (current MLB season year: {current_year}). "
+        f"Use Google Search to find accurate, up-to-date {current_year} MLB information for: {query}\n"
+        "Be concise, factual, and include relevant player names, teams, dates, and stats."
+    )
+    config = types.GenerateContentConfig(
+        system_instruction=search_system_instruction,
+        safety_settings=SAFETY_SETTINGS,
+        tools=[types.Tool(google_search=types.GoogleSearch())],
+        temperature=0.2,
+    )
+
+    for model_id in MODEL_CANDIDATES:
+        try:
+            resp = client.models.generate_content(
+                model=model_id,
+                contents=search_prompt,
+                config=config,
+            )
+            if resp and resp.text:
+                answer = resp.text.strip()
+                if any(kw in answer.lower() for kw in _UNSAFE_KEYWORDS):
+                    return {
+                        "found": False,
+                        "message": "Search results contained topics outside our kid-safe baseball guidelines.",
+                    }
+                return {"found": True, "query": query, "answer": answer}
+        except Exception:
+            continue
+
+    return {"found": False, "message": "Could not complete live web search right now."}
+
+
 MLB_TOOLS = [
+    lookup_mlb_team_roster,
     lookup_mlb_player_stats,
     lookup_mlb_standings,
     lookup_todays_mlb_scoreboard,
     lookup_player_news_and_transactions,
+    search_current_mlb_web,
     add_player_to_my_mvps,
     list_my_mvps,
 ]
@@ -283,6 +341,14 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
             "Ask a grown-up to add a valid Gemini API key to `.env` and restart the server so we can talk baseball!"
         )
 
+    today_str = datetime.now().strftime("%B %d, %Y")
+    current_year = datetime.now().year
+    dynamic_system_instruction = (
+        f"{SYSTEM_INSTRUCTION}\n"
+        f"Current Date Context: Today is {today_str} (Current MLB season year: {current_year}). "
+        f"Always treat {current_year} as the current season and verify current facts with your tools."
+    )
+
     contents: list[types.Content] = []
     for msg in history_messages[-20:]:
         role = "model" if msg.get("role") == "assistant" else "user"
@@ -294,7 +360,7 @@ def chat_with_dugout_coach(history_messages: list[dict], user_message: str) -> s
 
     def _build_config(model_id: str) -> types.GenerateContentConfig:
         config_kwargs: dict = {
-            "system_instruction": SYSTEM_INSTRUCTION,
+            "system_instruction": dynamic_system_instruction,
             "safety_settings": SAFETY_SETTINGS,
             "tools": MLB_TOOLS,
             "temperature": 0.7,

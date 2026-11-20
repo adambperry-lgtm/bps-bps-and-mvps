@@ -166,6 +166,149 @@ def get_mlb_teams() -> list[dict]:
     return teams
 
 
+def find_team(team_query: str) -> Optional[dict]:
+    q = (team_query or "").strip().lower()
+    if not q:
+        return None
+    teams = get_mlb_teams()
+    # Exact match on abbreviation, short name, full name, or slug
+    for t in teams:
+        candidates = [
+            (t.get("abbreviation") or "").lower(),
+            (t.get("team_short_name") or "").lower(),
+            (t.get("team_name") or "").lower(),
+            (t.get("team_slug") or "").lower(),
+            (t.get("location_name") or "").lower(),
+        ]
+        if q in candidates:
+            return t
+    # Substring match
+    for t in teams:
+        haystack = " ".join(
+            [
+                (t.get("team_name") or ""),
+                (t.get("team_short_name") or ""),
+                (t.get("abbreviation") or ""),
+                (t.get("team_slug") or ""),
+            ]
+        ).lower()
+        if q in haystack:
+            return t
+    return None
+
+
+def get_team_roster(team_query: str) -> dict:
+    team = find_team(team_query)
+    if not team:
+        return {"found": False, "message": f"No MLB team found matching '{team_query}'."}
+
+    team_id = team["team_id"]
+    current_year = datetime.now().year
+    cache_key = f"team_roster:{team_id}:{current_year}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    def _fetch_roster(stat_season: int, roster_type: str = "active") -> list[dict]:
+        data = _get_json(
+            f"/teams/{team_id}/roster",
+            params={
+                "rosterType": roster_type,
+                "season": current_year,
+                "hydrate": f"person(stats(type=[season],group=[hitting,pitching],season={stat_season}))",
+            },
+        )
+        return data.get("roster", [])
+
+    roster_raw = _fetch_roster(current_year, "active")
+    if not roster_raw:
+        roster_raw = _fetch_roster(current_year, "40Man")
+
+    stat_season_used = current_year
+
+    def _has_any_stats(entries: list[dict]) -> bool:
+        for entry in entries:
+            for sb in (entry.get("person") or {}).get("stats", []):
+                if sb.get("splits"):
+                    return True
+        return False
+
+    if roster_raw and not _has_any_stats(roster_raw):
+        prev_raw = _fetch_roster(current_year - 1, "active")
+        if prev_raw and _has_any_stats(prev_raw):
+            roster_raw = prev_raw
+            stat_season_used = current_year - 1
+
+    pitchers: list[dict] = []
+    position_players: list[dict] = []
+
+    for entry in roster_raw:
+        person = entry.get("person") or {}
+        pos = (entry.get("position") or {}).get("abbreviation", "N/A")
+        status_desc = (entry.get("status") or {}).get("description", "Active")
+        p_stats = None
+        h_stats = None
+        for sb in person.get("stats", []):
+            group = (sb.get("group") or {}).get("displayName", "")
+            splits = sb.get("splits", [])
+            if not splits:
+                continue
+            if group == "pitching":
+                p_stats = _extract_pitching_stats(splits)
+            elif group == "hitting":
+                h_stats = _extract_hitting_stats(splits)
+
+        if pos == "P":
+            pitchers.append(
+                {
+                    "player_id": person.get("id"),
+                    "full_name": person.get("fullName"),
+                    "position": pos,
+                    "status": status_desc,
+                    "throws": (person.get("pitchHand") or {}).get("code", "—"),
+                    "games_started": (p_stats or {}).get("games_started", 0),
+                    "games": (p_stats or {}).get("games", 0),
+                    "w_l": (p_stats or {}).get("w_l", "0-0"),
+                    "era": (p_stats or {}).get("era", "—"),
+                    "whip": (p_stats or {}).get("whip", "—"),
+                    "innings_pitched": (p_stats or {}).get("innings_pitched", "0.0"),
+                    "strikeouts": (p_stats or {}).get("strikeouts", 0),
+                    "saves": (p_stats or {}).get("saves", 0),
+                }
+            )
+        else:
+            position_players.append(
+                {
+                    "player_id": person.get("id"),
+                    "full_name": person.get("fullName"),
+                    "position": pos,
+                    "status": status_desc,
+                    "bats": (person.get("batSide") or {}).get("code", "—"),
+                    "games": (h_stats or {}).get("games", 0),
+                    "avg": (h_stats or {}).get("avg", "—"),
+                    "hr": (h_stats or {}).get("hr", 0),
+                    "rbi": (h_stats or {}).get("rbi", 0),
+                    "ops": (h_stats or {}).get("ops", "—"),
+                }
+            )
+
+    pitchers.sort(key=lambda x: (x["games_started"], x["games"]), reverse=True)
+    position_players.sort(key=lambda x: x["games"], reverse=True)
+
+    result = {
+        "found": True,
+        "team_id": team_id,
+        "team_name": team["team_name"],
+        "roster_year": current_year,
+        "stats_season": stat_season_used,
+        "pitchers": pitchers,
+        "position_players": position_players,
+    }
+    _cache.set(cache_key, result, TTL_TRANSACTIONS)
+    return result
+
+
+
 def search_players(query: str) -> list[dict]:
     q = query.strip()
     if not q:

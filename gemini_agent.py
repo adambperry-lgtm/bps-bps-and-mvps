@@ -581,11 +581,6 @@ def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
     if client is None:
         raise RuntimeError("GEMINI_API_KEY is not configured.")
 
-    prompt = (
-        "Read the following baseball story or message in a warm, natural, engaging tone "
-        "suitable for a young baseball fan:\n\n" + clean_text
-    )
-
     config = types.GenerateContentConfig(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
@@ -620,7 +615,7 @@ def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
         try:
             response = client.models.generate_content(
                 model=model_id,
-                contents=prompt,
+                contents=clean_text,
                 config=config,
             )
             break
@@ -636,7 +631,7 @@ def synthesize_speech(text: str, voice_name: str = "Puck") -> tuple[bytes, str]:
                     try:
                         response = v1beta_client.models.generate_content(
                             model=model_id,
-                            contents=prompt,
+                            contents=clean_text,
                             config=config,
                         )
                         break

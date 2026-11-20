@@ -12,6 +12,9 @@ def _resolve_db_path() -> str:
         raw = raw[len("sqlite:///"):]
     elif raw.startswith("sqlite://"):
         raw = raw[len("sqlite://"):]
+    elif raw.startswith(("postgres://", "postgresql://")):
+        print("[DB Warning] PostgreSQL DATABASE_URL is not supported by sqlite3; falling back to SQLite file path.", flush=True)
+        raw = ""
 
     if not raw:
         volume_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
@@ -297,6 +300,39 @@ def remove_favorite_player(player_id: int) -> bool:
             (player_id,),
         )
     return cur.rowcount > 0
+
+
+def restore_favorite_players(players: list[dict]) -> int:
+    """Bulk-restore missing favorite players into the server DB."""
+    if not players:
+        return 0
+    now = _now_iso()
+    restored = 0
+    with get_conn() as conn:
+        for p in players:
+            pid = p.get("player_id")
+            full_name = (p.get("full_name") or "").strip()
+            if not pid or not full_name:
+                continue
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO favorite_players
+                (player_id, full_name, team_id, team_name, team_slug, position, added_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(pid),
+                    full_name,
+                    p.get("team_id"),
+                    p.get("team_name"),
+                    p.get("team_slug"),
+                    p.get("position"),
+                    p.get("added_at") or now,
+                ),
+            )
+            if cur.rowcount > 0:
+                restored += 1
+    return restored
 
 
 def get_favorite_team() -> Optional[dict]:

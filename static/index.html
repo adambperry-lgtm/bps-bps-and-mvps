@@ -396,6 +396,25 @@
             class="w-5 h-5 rounded text-navy focus:ring-navy cursor-pointer" />
         </div>
 
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-sm font-bold text-navy">MVP Storage &amp; Backup</div>
+            <span id="settings-storage-status" class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">Checking...</span>
+          </div>
+          <p class="text-xs text-slate-500">Copy a backup to move MVPs between devices or Safari &amp; Home Screen app.</p>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="copyMvpBackup()"
+              class="flex-1 px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-navy text-xs font-semibold transition">
+              📋 Copy MVP Backup
+            </button>
+            <button type="button" onclick="importMvpBackup()"
+              class="flex-1 px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-navy text-xs font-semibold transition">
+              📥 Restore Backup
+            </button>
+          </div>
+          <div id="settings-backup-msg" class="text-xs font-medium text-turf hidden"></div>
+        </div>
+
         <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
           <button onclick="resetToPhillies()"
             class="text-xs font-semibold text-ballred hover:underline">
@@ -417,6 +436,6 @@
   </div>
 
   <audio id="tts-audio-player" playsinline preload="auto" class="hidden"></audio>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261120"></script>
 </body>
 </html>

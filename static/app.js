@@ -446,14 +446,13 @@ async function sendChatMessage(msg) {
     appendMessageBubble('assistant', reply);
 
     if (Array.isArray(data.added_mvps) && data.added_mvps.length > 0) {
-      const ids = getSavedMvpIds();
       for (const p of data.added_mvps) {
         if (p && p.player_id) {
-          ids.push(p.player_id);
+          unmarkRemovedMvp(p.player_id);
           STATE.favoritePlayerIds.add(p.player_id);
         }
       }
-      setSavedMvpIds(ids);
+      upsertSavedMvps(data.added_mvps);
       appendMvpAddedNotice(data.added_mvps);
       loadFavorites();
     }
@@ -770,6 +769,7 @@ function openSettingsModal() {
   const modal = document.getElementById('settings-modal');
   const teamSelect = document.getElementById('settings-team-select');
   const voiceSelect = document.getElementById('settings-voice-select');
+  const backupMsg = document.getElementById('settings-backup-msg');
 
   if (teamSelect && STATE.favoriteTeamId) {
     teamSelect.value = String(STATE.favoriteTeamId);
@@ -777,8 +777,32 @@ function openSettingsModal() {
   if (voiceSelect && STATE.ttsVoice) {
     voiceSelect.value = STATE.ttsVoice;
   }
+  if (backupMsg) {
+    backupMsg.classList.add('hidden');
+    backupMsg.textContent = '';
+  }
   modal.classList.remove('hidden');
   document.body.classList.add('overflow-hidden');
+
+  const statusEl = document.getElementById('settings-storage-status');
+  if (statusEl) {
+    statusEl.textContent = 'Checking...';
+    statusEl.className = 'text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700';
+    fetch('/api/health', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((h) => {
+        if (h && h.persistent_storage) {
+          statusEl.textContent = 'Persistent DB Active';
+          statusEl.className = 'text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800';
+        } else {
+          statusEl.textContent = 'Browser Backup Only';
+          statusEl.className = 'text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800';
+        }
+      })
+      .catch(() => {
+        statusEl.textContent = 'Status Unknown';
+      });
+  }
 }
 
 function closeSettingsModal() {
@@ -798,6 +822,11 @@ async function saveSettings() {
   if (voiceSelect && voiceSelect.value) {
     STATE.ttsVoice = voiceSelect.value;
     localStorage.setItem('bp_tts_voice', STATE.ttsVoice);
+  }
+  try {
+    localStorage.setItem('bp_favorite_team', String(teamId));
+  } catch {
+    // ignore storage errors
   }
   await fetch('/api/favorites/team', {
     method: 'POST',
@@ -833,21 +862,161 @@ function toggleAutoRefresh() {
   }
 }
 
-function getSavedMvpIds() {
+function _normalizeMvpEntry(item) {
+  if (typeof item === 'number' && Number.isFinite(item)) {
+    return { player_id: item };
+  }
+  if (item && typeof item === 'object' && item.player_id) {
+    const entry = { player_id: Number(item.player_id) };
+    if (item.full_name) entry.full_name = String(item.full_name);
+    if (item.team_id != null) entry.team_id = item.team_id;
+    if (item.team_name) entry.team_name = item.team_name;
+    if (item.team_slug) entry.team_slug = item.team_slug;
+    if (item.position) entry.position = item.position;
+    return entry;
+  }
+  return null;
+}
+
+function getSavedMvps() {
   try {
     const raw = localStorage.getItem('bp_my_mvps');
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    const byId = new Map();
+    for (const item of parsed) {
+      const norm = _normalizeMvpEntry(item);
+      if (norm && norm.player_id) {
+        const prev = byId.get(norm.player_id) || {};
+        byId.set(norm.player_id, { ...prev, ...norm });
+      }
+    }
+    return Array.from(byId.values());
   } catch {
     return [];
   }
 }
 
-function setSavedMvpIds(ids) {
+function setSavedMvps(players) {
   try {
-    localStorage.setItem('bp_my_mvps', JSON.stringify(Array.from(new Set(ids))));
+    const byId = new Map();
+    for (const item of players || []) {
+      const norm = _normalizeMvpEntry(item);
+      if (norm && norm.player_id) {
+        const prev = byId.get(norm.player_id) || {};
+        byId.set(norm.player_id, { ...prev, ...norm });
+      }
+    }
+    localStorage.setItem('bp_my_mvps', JSON.stringify(Array.from(byId.values())));
   } catch {
     // ignore storage errors
+  }
+}
+
+function upsertSavedMvps(players) {
+  const existing = getSavedMvps();
+  setSavedMvps([...existing, ...(players || [])]);
+}
+
+function removeSavedMvp(playerId) {
+  const pid = Number(playerId);
+  setSavedMvps(getSavedMvps().filter((p) => p.player_id !== pid));
+}
+
+function getRemovedMvpIds() {
+  try {
+    const raw = localStorage.getItem('bp_removed_mvps');
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map(Number) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markRemovedMvp(playerId) {
+  try {
+    const set = getRemovedMvpIds();
+    set.add(Number(playerId));
+    localStorage.setItem('bp_removed_mvps', JSON.stringify(Array.from(set).slice(-100)));
+  } catch {
+    // ignore
+  }
+}
+
+function unmarkRemovedMvp(playerId) {
+  try {
+    const set = getRemovedMvpIds();
+    if (set.delete(Number(playerId))) {
+      localStorage.setItem('bp_removed_mvps', JSON.stringify(Array.from(set)));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function _showBackupMsg(text, isError = false) {
+  const el = document.getElementById('settings-backup-msg');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `text-xs font-medium ${isError ? 'text-ballred' : 'text-turf'}`;
+  el.classList.remove('hidden');
+}
+
+async function copyMvpBackup() {
+  const mvps = getSavedMvps();
+  if (mvps.length === 0) {
+    _showBackupMsg('No MVPs saved yet to back up.', true);
+    return;
+  }
+  const payload = JSON.stringify({
+    v: 1,
+    team_id: STATE.favoriteTeamId || 143,
+    mvps,
+  });
+  try {
+    await navigator.clipboard.writeText(payload);
+    _showBackupMsg(`Copied ${mvps.length} MVP(s) to clipboard!`);
+  } catch {
+    window.prompt('Copy this MVP backup text:', payload);
+  }
+}
+
+async function importMvpBackup() {
+  const raw = window.prompt('Paste your MVP backup text here:');
+  if (!raw || !raw.trim()) return;
+  try {
+    const parsed = JSON.parse(raw.trim());
+    const mvps = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.mvps) ? parsed.mvps : []);
+    if (mvps.length === 0) {
+      _showBackupMsg('No MVPs found in that backup.', true);
+      return;
+    }
+    for (const p of mvps) {
+      if (p && p.player_id) unmarkRemovedMvp(p.player_id);
+    }
+    upsertSavedMvps(mvps);
+    const res = await fetch('/api/favorites/players/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ players: getSavedMvps() }),
+    });
+    if (parsed.team_id) {
+      try {
+        localStorage.setItem('bp_favorite_team', String(parsed.team_id));
+      } catch {
+        // ignore
+      }
+      await fetch('/api/favorites/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team_id: Number(parsed.team_id) }),
+      });
+    }
+    const result = res.ok ? await res.json() : {};
+    await loadFavorites(true);
+    _showBackupMsg(`Restored ${result.restored ?? mvps.length} MVP(s)!`);
+  } catch {
+    _showBackupMsg('Invalid backup text. Please paste the exact backup JSON.', true);
   }
 }
 
@@ -860,22 +1029,64 @@ async function loadFavorites(showSpinner = false) {
     let data = await res.json();
 
     let favPlayers = data.favorite_players || [];
-    const localIds = getSavedMvpIds();
+    const localPlayers = getSavedMvps();
+    const removedIds = getRemovedMvpIds();
+    const serverIds = new Set(favPlayers.map((p) => p.player_id));
 
-    // If server DB was reset (e.g., Railway redeploy without /data volume), restore from localStorage
-    if (favPlayers.length === 0 && localIds.length > 0) {
-      for (const pid of localIds) {
-        await fetch('/api/favorites/players', {
+    // Restore ANY locally backed-up MVPs that are missing from the server DB (even if server has >=1 other player)
+    const missingFromServer = localPlayers.filter(
+      (p) => p && p.player_id && !serverIds.has(p.player_id) && !removedIds.has(p.player_id)
+    );
+
+    let needRefetch = false;
+    if (missingFromServer.length > 0) {
+      try {
+        const restoreRes = await fetch('/api/favorites/players/restore', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ player_id: pid }),
+          body: JSON.stringify({ players: missingFromServer }),
         });
+        if (restoreRes.ok) {
+          const restoreData = await restoreRes.json();
+          if ((restoreData.restored || 0) > 0) {
+            needRefetch = true;
+          }
+        }
+      } catch (restoreErr) {
+        console.error('Failed to restore MVPs to server', restoreErr);
       }
+    }
+
+    // Restore favorite team if server reset to default Phillies (143) and DB was empty
+    const savedTeamId = parseInt(localStorage.getItem('bp_favorite_team') || '', 10);
+    if (
+      favPlayers.length === 0 &&
+      savedTeamId &&
+      savedTeamId !== 143 &&
+      data.favorite_team &&
+      data.favorite_team.team_id === 143
+    ) {
+      try {
+        await fetch('/api/favorites/team', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ team_id: savedTeamId }),
+        });
+        needRefetch = true;
+      } catch {
+        // ignore
+      }
+    }
+
+    if (needRefetch) {
       res = await fetch('/api/favorites', { cache: 'no-store' });
       data = await res.json();
       favPlayers = data.favorite_players || [];
-    } else if (favPlayers.length > 0) {
-      setSavedMvpIds(favPlayers.map((p) => p.player_id));
+    }
+
+    // Merge server MVPs into localStorage without clobbering any local MVPs that haven't synced yet
+    if (favPlayers.length > 0) {
+      upsertSavedMvps(favPlayers);
     }
 
     STATE.favoritePlayerIds = new Set(favPlayers.map((p) => p.player_id));
@@ -1492,25 +1703,28 @@ function statBox(label, value) {
 }
 
 async function addFavoritePlayer(playerId) {
+  unmarkRemovedMvp(playerId);
   const res = await fetch('/api/favorites/players', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ player_id: playerId }),
   });
   if (res.ok) {
-    const ids = getSavedMvpIds();
-    ids.push(playerId);
-    setSavedMvpIds(ids);
+    try {
+      const payload = await res.json();
+      upsertSavedMvps([payload.player || payload.saved || { player_id: playerId }]);
+    } catch {
+      upsertSavedMvps([{ player_id: playerId }]);
+    }
   }
   await loadFavorites();
   await viewPlayerDetails(playerId);
 }
 
 async function removeFavoritePlayer(playerId) {
-  const res = await fetch(`/api/favorites/players/${playerId}`, { method: 'DELETE' });
-  if (res.ok) {
-    setSavedMvpIds(getSavedMvpIds().filter((id) => id !== playerId));
-  }
+  markRemovedMvp(playerId);
+  removeSavedMvp(playerId);
+  await fetch(`/api/favorites/players/${playerId}`, { method: 'DELETE' });
   await loadFavorites();
   const card = document.getElementById('player-detail-card');
   if (!card.classList.contains('hidden')) {

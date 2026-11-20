@@ -235,6 +235,52 @@ def delete_favorite_player(player_id: int):
     return {"removed": removed, "player_id": player_id}
 
 
+class RestorePlayerItem(BaseModel):
+    player_id: int
+    full_name: Optional[str] = None
+    team_id: Optional[int] = None
+    team_name: Optional[str] = None
+    team_slug: Optional[str] = None
+    position: Optional[str] = None
+    added_at: Optional[str] = None
+
+
+class RestorePlayersRequest(BaseModel):
+    players: list[RestorePlayerItem] = Field(default_factory=list)
+
+
+@app.post("/api/favorites/players/restore")
+def restore_favorite_players(req: RestorePlayersRequest):
+    existing_ids = {p["player_id"] for p in database.get_favorite_players()}
+    ready_to_insert = []
+    for item in req.players[:100]:
+        if item.player_id in existing_ids:
+            continue
+        if item.full_name and item.full_name.strip():
+            ready_to_insert.append(item.model_dump())
+        else:
+            try:
+                details = mlb_service.get_player_details(item.player_id)
+                ready_to_insert.append(
+                    {
+                        "player_id": details["player_id"],
+                        "full_name": details["full_name"],
+                        "team_id": details.get("team_id"),
+                        "team_name": details.get("team_name"),
+                        "team_slug": details.get("team_slug"),
+                        "position": details.get("position"),
+                    }
+                )
+            except Exception:
+                continue
+
+    restored = database.restore_favorite_players(ready_to_insert)
+    return {
+        "restored": restored,
+        "favorite_ids": [p["player_id"] for p in database.get_favorite_players()],
+    }
+
+
 @app.post("/api/favorites/team")
 def set_favorite_team(req: FavoriteTeamRequest):
     teams = mlb_service.get_mlb_teams()
